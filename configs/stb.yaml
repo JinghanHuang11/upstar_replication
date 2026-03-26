@@ -54,6 +54,11 @@ stb:
   edge_removal_rate: 0.1
   edge_addition_rate: 0.1
 
+  # Output paths (used by phases.py to collect results)
+  stb_scores_path: outputs/phase3_stb/checkpoints/stb_scores.npy
+  motivation_labels_path: outputs/phase3_stb/checkpoints/motivation_labels.npy
+  item_embeddings_path: outputs/phase2_item_repr/checkpoints/item_embeddings.pt
+
 # Backward compatibility (legacy parameters)
 # These are used if advanced perturbation is disabled
 feature_noise_std: 0.1
