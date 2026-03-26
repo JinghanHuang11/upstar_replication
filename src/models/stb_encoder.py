@@ -19,7 +19,7 @@ Components:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
