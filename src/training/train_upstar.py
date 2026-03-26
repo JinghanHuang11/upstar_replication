@@ -29,7 +29,7 @@ import sys
 # Add parent to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.models.upstar import UPSTARMoodel
+from src.models.upstar import UPSTARModel
 from src.data.upstar_dataset import get_upstar_dataloader
 from src.training.losses import UPSTARLoss, create_loss_from_config
 from src.utils.seed import set_seed
@@ -496,7 +496,7 @@ def main(args=None):
     )
 
     # Create model
-    model = UPSTARMoodel(
+    model = UPSTARModel(
         num_items=num_items,
         embed_dim=config['model']['embed_dim'],
         hidden_dim=config['model']['hidden_dim'],
