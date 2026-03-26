@@ -174,7 +174,7 @@ def validate_args(args):
     # Warn if force-rerun is not set (for paper alignment)
     if not args.force_rerun and not args.resume:
         logger.warning("")
-        logger.warning("⚠️  PAPER-ALIGNED IMPROVEMENTS NOT APPLIED!")
+        logger.warning("[WARNING] PAPER-ALIGNED IMPROVEMENTS NOT APPLIED!")
         logger.warning("   The following modules have been updated to align with the paper:")
         logger.warning("   - Module 1: Item-Time Graph (day-level time nodes)")
         logger.warning("   - Module 2: Item-GNN (in/out neighbor separation)")
@@ -354,11 +354,11 @@ def main():
         logger.info(f"Results saved to: {manager.output_dir}")
 
     except KeyboardInterrupt:
-        logger.info("\n⚠️  Experiment interrupted by user")
+        logger.info("\n[INTERRUPTED] Experiment interrupted by user")
         logger.info("You can resume using --resume flag")
         sys.exit(1)
     except Exception as e:
-        logger.error(f"\n❌ Experiment failed: {e}")
+        logger.error(f"\n[FAILED] Experiment failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

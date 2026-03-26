@@ -200,8 +200,11 @@ def save_checkpoint(
         logger.info(f"Saved best model to {best_path}")
 
 
-def main():
-    args = parse_args()
+def main(args=None):
+    if args is None:
+        args = parse_args()
+    if not hasattr(args, 'resume'):
+        args.resume = None
 
     # Load config
     with open(args.config, 'r') as f:
@@ -326,6 +329,8 @@ def main():
     logger.info("=" * 60)
     logger.info("Training complete!")
     logger.info("=" * 60)
+
+    return test_metrics
 
 
 if __name__ == '__main__':
