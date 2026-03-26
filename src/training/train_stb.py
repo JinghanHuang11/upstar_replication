@@ -252,8 +252,9 @@ def save_results(
     logger.info(f"Saved statistics to {stats_path}")
 
 
-def main():
-    args = parse_args()
+def main(args=None):
+    if args is None:
+        args = parse_args()
 
     # Load config
     with open(args.config, 'r') as f:

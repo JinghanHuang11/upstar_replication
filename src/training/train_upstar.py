@@ -429,8 +429,11 @@ def get_stage_description(stage_num: int) -> str:
     return descriptions.get(stage_num, f"Stage {stage_num}")
 
 
-def main():
-    args = parse_args()
+def main(args=None):
+    if args is None:
+        args = parse_args()
+    if not hasattr(args, 'resume_stage'):
+        args.resume_stage = None
 
     # Load config
     with open(args.config, 'r') as f:

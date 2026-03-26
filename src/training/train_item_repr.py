@@ -281,8 +281,11 @@ def analyze_embeddings(
         logger.info(f"  Item {i}: neighbors = {neighbors.tolist()}")
 
 
-def main():
-    args = parse_args()
+def main(args=None):
+    if args is None:
+        args = parse_args()
+    if not hasattr(args, 'resume'):
+        args.resume = None
 
     # Load config
     with open(args.config, 'r') as f:
@@ -390,6 +393,8 @@ def main():
     logger.info("=" * 60)
     logger.info("Item representation learning complete!")
     logger.info("=" * 60)
+
+    return {}
 
 
 if __name__ == '__main__':
