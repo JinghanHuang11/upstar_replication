@@ -56,10 +56,10 @@ class Phase0_Preprocess(ExperimentPhase):
         logger.info("Running data preprocessing...")
 
         # Import here to avoid circular imports
-        from src.data.preprocess import Preprocessor
+        from src.data.preprocess import get_preprocessor
 
-        # Create preprocessor
-        preprocessor = Preprocessor(self.config)
+        # Create preprocessor (uses TafengPreprocessor for tafeng dataset)
+        preprocessor = get_preprocessor(self.config)
         df = preprocessor.run()
 
         # Build sequences
