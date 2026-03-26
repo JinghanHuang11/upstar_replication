@@ -254,7 +254,9 @@ class Phase4_UPSTAR(ExperimentPhase):
 
         import argparse
         args = argparse.Namespace(
-            config=self.config.get('upstar_config', 'configs/tafeng_upstar.yaml')
+            config=self.config.get('upstar_config', 'configs/tafeng_upstar.yaml'),
+            stage=None,
+            resume_stage=None
         )
 
         # Run training
