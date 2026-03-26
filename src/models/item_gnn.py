@@ -73,7 +73,7 @@ class ItemGNNLayer(nn.Module):
         self,
         embed_dim: int,
         use_remember_gate: bool = True,
-        aggregation: str = 'mean'
+        aggregation: str = 'sum'
     ):
         super().__init__()
 
@@ -120,8 +120,8 @@ class ItemGNNLayer(nn.Module):
         h_in_agg = self._aggregate_in_neighbors(x, edge_index, edge_weight)
         h_out_agg = self._aggregate_out_neighbors(x, edge_index, edge_weight)
 
-        # Apply separate transformations (per paper Section 3.2)
-        h_agg = self.W_in(h_in_agg) + self.W_out(h_out_agg)
+        # Apply separate transformations with ReLU (per paper Section 3.2 formula)
+        h_agg = F.relu(self.W_in(h_in_agg) + self.W_out(h_out_agg))
 
         # Combine with remember gate
         if self.use_remember_gate:
@@ -154,25 +154,23 @@ class ItemGNNLayer(nn.Module):
         num_nodes = x.shape[0]
         src, dst = edge_index[0], edge_index[1]
 
+        # Weight messages by edge_weight if provided, else uniform weight=1
+        if edge_weight is not None:
+            # [num_edges, 1] for broadcasting with [num_edges, embed_dim]
+            w = edge_weight.unsqueeze(-1)
+            messages = x[src] * w  # weighted source features
+        else:
+            messages = x[src]
+
+        # SUM aggregation: h_in(n) = SUM_{p in N_in(n)} h(p)  (paper formula)
+        aggregated = torch.zeros_like(x)
+        aggregated.index_add_(0, dst, messages)
+
         if self.aggregation == 'mean':
-            # Sum in-neighbors, then divide by in-degree
-            aggregated = torch.zeros_like(x)
             in_degree = torch.zeros(num_nodes, device=x.device)
-
-            # Aggregate: for each edge (src, dst), add src's features to dst
-            aggregated.index_add_(0, dst, x[src])
             in_degree.index_add_(0, dst, torch.ones_like(dst, dtype=torch.float))
-
-            # Avoid division by zero
             in_degree = torch.clamp(in_degree, min=1).unsqueeze(-1)
             aggregated = aggregated / in_degree
-
-        elif self.aggregation == 'sum':
-            aggregated = torch.zeros_like(x)
-            aggregated.index_add_(0, dst, x[src])
-
-        else:
-            raise ValueError(f"Unknown aggregation: {self.aggregation}")
 
         return aggregated
 
@@ -199,25 +197,22 @@ class ItemGNNLayer(nn.Module):
         num_nodes = x.shape[0]
         src, dst = edge_index[0], edge_index[1]
 
+        # Weight messages by edge_weight if provided, else uniform weight=1
+        if edge_weight is not None:
+            w = edge_weight.unsqueeze(-1)
+            messages = x[dst] * w  # weighted destination features
+        else:
+            messages = x[dst]
+
+        # SUM aggregation: h_out(n) = SUM_{q in N_out(n)} h(q)  (paper formula)
+        aggregated = torch.zeros_like(x)
+        aggregated.index_add_(0, src, messages)
+
         if self.aggregation == 'mean':
-            # Sum out-neighbors, then divide by out-degree
-            aggregated = torch.zeros_like(x)
             out_degree = torch.zeros(num_nodes, device=x.device)
-
-            # Aggregate: for each edge (src, dst), add dst's features to src
-            aggregated.index_add_(0, src, x[dst])
             out_degree.index_add_(0, src, torch.ones_like(src, dtype=torch.float))
-
-            # Avoid division by zero
             out_degree = torch.clamp(out_degree, min=1).unsqueeze(-1)
             aggregated = aggregated / out_degree
-
-        elif self.aggregation == 'sum':
-            aggregated = torch.zeros_like(x)
-            aggregated.index_add_(0, src, x[dst])
-
-        else:
-            raise ValueError(f"Unknown aggregation: {self.aggregation}")
 
         return aggregated
 
@@ -240,21 +235,29 @@ class ItemGNN(nn.Module):
         embed_dim: int = 128,
         num_layers: int = 1,
         use_remember_gate: bool = True,
-        aggregation: str = 'mean',
-        dropout: float = 0.1
+        aggregation: str = 'sum',
+        dropout: float = 0.1,
+        item_feature_dim: Optional[int] = None
     ):
         super().__init__()
 
         self.num_items = num_items
         self.embed_dim = embed_dim
         self.num_layers = num_layers
+        self.item_feature_dim = item_feature_dim
 
-        # Item embedding
-        self.item_embedding = nn.Embedding(
-            num_embeddings=num_items,
-            embedding_dim=embed_dim,
-            padding_idx=0  # If using padding
-        )
+        if item_feature_dim is not None:
+            # Feature projector: intrinsic attributes -> embed_dim
+            self.feat_proj = nn.Linear(item_feature_dim, embed_dim)
+            self.item_embedding = None
+        else:
+            # Fallback: ID embedding
+            self.feat_proj = None
+            self.item_embedding = nn.Embedding(
+                num_embeddings=num_items,
+                embedding_dim=embed_dim,
+                padding_idx=0
+            )
 
         # GNN layers
         self.gnn_layers = nn.ModuleList()
@@ -275,12 +278,14 @@ class ItemGNN(nn.Module):
 
         logger.info(f"Initialized ItemGNN: "
                    f"num_items={num_items}, embed_dim={embed_dim}, "
-                   f"num_layers={num_layers}, remember_gate={use_remember_gate}")
+                   f"num_layers={num_layers}, remember_gate={use_remember_gate}, "
+                   f"init={'attr_features' if item_feature_dim is not None else 'id_embedding'}")
 
     def forward(
         self,
         edge_index: torch.Tensor,
-        edge_weight: Optional[torch.Tensor] = None
+        edge_weight: Optional[torch.Tensor] = None,
+        item_features: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Forward pass
@@ -288,12 +293,16 @@ class ItemGNN(nn.Module):
         Args:
             edge_index: [2, num_edges] - graph structure
             edge_weight: [num_edges] - optional edge weights
+            item_features: [num_items, item_feature_dim] - optional intrinsic attributes
 
         Returns:
             item_embeddings: [num_items, embed_dim]
         """
-        # Initialize with item embeddings
-        x = self.item_embedding.weight  # [num_items, embed_dim]
+        # Initialize from intrinsic attributes or ID embedding
+        if item_features is not None and self.feat_proj is not None:
+            x = self.feat_proj(item_features)  # [num_items, embed_dim]
+        else:
+            x = self.item_embedding.weight  # [num_items, embed_dim]
 
         # Apply GNN layers
         for i, gnn_layer in enumerate(self.gnn_layers):
@@ -315,7 +324,13 @@ class ItemGNN(nn.Module):
         Returns:
             embeddings: [num_items, embed_dim]
         """
-        return self.item_embedding.weight.detach()
+        if self.item_embedding is not None:
+            return self.item_embedding.weight.detach()
+        # Feature mode: no stored embedding weight; caller must use forward() output
+        raise RuntimeError(
+            "get_item_embeddings() is not available in feature mode. "
+            "Call forward(edge_index) and cache the result instead."
+        )
 
     def predict_links(
         self,
@@ -331,7 +346,13 @@ class ItemGNN(nn.Module):
             scores: [num_pairs] - link scores
         """
         with torch.no_grad():
-            embeddings = self.item_embedding.weight
+            if self.item_embedding is not None:
+                embeddings = self.item_embedding.weight
+            else:
+                raise RuntimeError(
+                    "predict_links() requires a cached embedding in feature mode. "
+                    "Pass embeddings explicitly."
+                )
             src_emb = embeddings[node_pairs[:, 0]]
             dst_emb = embeddings[node_pairs[:, 1]]
 

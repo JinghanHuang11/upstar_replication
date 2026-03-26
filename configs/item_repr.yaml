@@ -28,7 +28,11 @@ training:
 
 # Item Graph
 item_repr:
-  time_threshold: 86400  # Session time threshold (1 day)
+  time_threshold: 86400    # Session split threshold (seconds); 86400 = 1 day
+  aggregation: sum         # SUM aggregation per paper formula (Section 3.2)
+  use_edge_weight: false   # Whether to weight messages by transition frequency
+  use_item_features: false # Whether to initialize from intrinsic item attributes
+  item_feature_path: null  # Path to item feature tensor (.pt); required if use_item_features=true
 
 # Evaluation
 evaluation:

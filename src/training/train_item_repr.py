@@ -123,9 +123,12 @@ def train_epoch(
     model.train()
 
     edge_index = graph['edge_index'].to(device)
+    use_edge_weight = config.get('item_repr', {}).get('use_edge_weight', False)
     edge_weight = graph.get('edge_weight', None)
-    if edge_weight is not None:
+    if edge_weight is not None and use_edge_weight:
         edge_weight = edge_weight.to(device)
+    else:
+        edge_weight = None
 
     # Sample positive and negative edges
     num_edges = edge_index.shape[1]
@@ -180,9 +183,12 @@ def evaluate(
     model.eval()
 
     edge_index = graph['edge_index'].to(device)
+    use_edge_weight = config.get('item_repr', {}).get('use_edge_weight', False)
     edge_weight = graph.get('edge_weight', None)
-    if edge_weight is not None:
+    if edge_weight is not None and use_edge_weight:
         edge_weight = edge_weight.to(device)
+    else:
+        edge_weight = None
 
     # Get embeddings
     embeddings = model(edge_index, edge_weight)

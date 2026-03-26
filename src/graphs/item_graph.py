@@ -67,15 +67,34 @@ class ItemGraphBuilder:
         for user_idx, data in user_sequences.items():
             raw_items = data['items']
 
-            # Support both old format and new (item, timestamp) format
-            if raw_items and isinstance(raw_items[0], tuple):
-                items_only = [item for item, _ in raw_items]
-            else:
-                items_only = raw_items
+            if not raw_items:
+                user_sessions[user_idx] = []
+                continue
 
-            # For now, treat each user's entire sequence as one session
-            # TODO: Add timestamp-based session splitting if available
-            user_sessions[user_idx] = [items_only]
+            has_timestamps = isinstance(raw_items[0], tuple)
+
+            if not has_timestamps:
+                # No timestamp info — one session per user
+                user_sessions[user_idx] = [list(raw_items)]
+                continue
+
+            # Sort by timestamp ascending before splitting
+            sorted_items = sorted(raw_items, key=lambda x: x[1])
+
+            # Split by time gap: gap > threshold => new session
+            sessions = []
+            current_session = [sorted_items[0][0]]
+            for k in range(1, len(sorted_items)):
+                item, ts = sorted_items[k]
+                prev_ts = sorted_items[k - 1][1]
+                if (ts - prev_ts) > self.time_threshold:
+                    sessions.append(current_session)
+                    current_session = [item]
+                else:
+                    current_session.append(item)
+            sessions.append(current_session)
+
+            user_sessions[user_idx] = sessions
 
         logger.info(f"Built sessions for {len(user_sessions)} users")
         return user_sessions
@@ -107,11 +126,10 @@ class ItemGraphBuilder:
 
         for user_idx, sessions in user_sessions.items():
             for session in sessions:
-                # All pairs within session (i -> j for i < j)
-                for i in range(len(session)):
-                    for j in range(i + 1, len(session)):
-                        src, dst = session[i], session[j]
-                        edge_counter[(src, dst)] += 1
+                # Only consecutive purchase transitions: i_(n-1) -> i_n
+                for i in range(len(session) - 1):
+                    src, dst = session[i], session[i + 1]
+                    edge_counter[(src, dst)] += 1
 
         # Build edge index
         if len(edge_counter) == 0:
@@ -166,10 +184,9 @@ class ItemGraphBuilder:
                 session_t = sessions[t]
                 session_t_next = sessions[t + window]
 
-                # All pairs: item from session t -> item from session t+1
-                for item_i in session_t:
-                    for item_j in session_t_next:
-                        edge_counter[(item_i, item_j)] += 1
+                # Only the boundary transition: last item of session t -> first item of session t+1
+                if session_t and session_t_next:
+                    edge_counter[(session_t[-1], session_t_next[0])] += 1
 
         if len(edge_counter) == 0:
             logger.warning("No cross-session edges found!")
