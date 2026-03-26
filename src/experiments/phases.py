@@ -59,13 +59,13 @@ class Phase0_Preprocess(ExperimentPhase):
         from src.data.preprocess import Preprocessor
 
         # Create preprocessor
-        preprocessor = Preprocessor(self.config['dataset'])
+        preprocessor = Preprocessor(self.config)
         metadata, sequences = preprocessor.run()
 
         # Build sequences
         from src.data.build_sequences import SequenceBuilder
 
-        builder = SequenceBuilder(self.config['dataset'])
+        builder = SequenceBuilder(self.config)
         train_seqs, val_seqs, test_seqs = builder.build_sequences(sequences)
 
         results = {
