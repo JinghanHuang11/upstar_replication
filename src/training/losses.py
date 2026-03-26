@@ -12,7 +12,6 @@ All losses are configurable via config.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Dict, Optional
 import logging
 
@@ -31,11 +30,22 @@ class UPSTARLoss(nn.Module):
 
     def __init__(
         self,
-        # Loss weights
+        # Loss weights (per paper Section 3.3 formula):
+        #   L_total = λ_global*L_global + λ_branch*L_S&E&O + λ_ortho*L_orth + λ_distill*L_distill
+        #
+        # Paper-derived defaults:
+        #   λ_global  = 1.0  (no additional weight)
+        #   λ_branch  = 0.7  (paper λ = 0.7)
+        #   λ_ortho   = 1.0  (τ_s, τ_e already inside L_orth; no extra weight)
+        #   λ_distill = 1.0  (distill_lambda already inside L_distill; no extra weight)
+        #
+        # Engineering knobs for experimentation:
+        #   lambda_ortho   > 1.0: stronger orthogonality push
+        #   lambda_distill > 1.0: stronger distillation signal
         lambda_global: float = 1.0,
-        lambda_branch: float = 0.5,
-        lambda_ortho: float = 0.1,
-        lambda_distill: float = 0.3,
+        lambda_branch: float = 0.7,
+        lambda_ortho: float = 1.0,
+        lambda_distill: float = 1.0,
 
         # Loss switches (for staged training)
         use_global_loss: bool = True,
@@ -43,13 +53,13 @@ class UPSTARLoss(nn.Module):
         use_orthogonality_loss: bool = False,
         use_distillation_loss: bool = False,
 
-        # Orthogonality parameters
-        tau_s: float = 0.5,
-        tau_e: float = 0.5,
+        # Orthogonality parameters (inside L_orth)
+        tau_s: float = 0.5,   # paper: τ_s = 0.5
+        tau_e: float = 0.5,   # paper: τ_e = 0.5
 
-        # Distillation parameters
+        # Distillation parameters (inside L_distill)
         temperature: float = 3.0,
-        distill_lambda: float = 0.7,
+        distill_lambda: float = 0.7,  # paper: λ = 0.7
         num_items: int = None
     ):
         super().__init__()
@@ -66,11 +76,11 @@ class UPSTARLoss(nn.Module):
         self.use_orthogonality_loss = use_orthogonality_loss
         self.use_distillation_loss = use_distillation_loss
 
-        # Orthogonality parameters
+        # Orthogonality parameters (inside L_orth)
         self.tau_s = tau_s
         self.tau_e = tau_e
 
-        # Distillation parameters
+        # Distillation parameters (inside L_distill)
         self.temperature = temperature
         self.distill_lambda = distill_lambda
         self.num_items = num_items
@@ -81,19 +91,21 @@ class UPSTARLoss(nn.Module):
         logger.info("=" * 60)
         logger.info("Initialized UPSTAR Loss")
         logger.info("=" * 60)
+        logger.info(f"Loss formula (paper Section 3.3):")
+        logger.info(f"  L_total = λ_global*L_global + λ_branch*L_S&E&O + λ_ortho*L_orth + λ_distill*L_distill")
         logger.info(f"Loss weights:")
-        logger.info(f"  λ_global:  {lambda_global}")
-        logger.info(f"  λ_branch:  {lambda_branch}")
-        logger.info(f"  λ_ortho:  {lambda_ortho}")
-        logger.info(f"  λ_distill: {lambda_distill}")
+        logger.info(f"  λ_global  = {lambda_global}  (paper: 1.0)")
+        logger.info(f"  λ_branch  = {lambda_branch}  (paper: λ=0.7 for L_S&E&O)")
+        logger.info(f"  λ_ortho   = {lambda_ortho}  (τ_s, τ_e already inside L_orth)")
+        logger.info(f"  λ_distill = {lambda_distill}  (distill_lambda already inside L_distill)")
+        logger.info(f"Inner params:")
+        logger.info(f"  tau_s={tau_s}, tau_e={tau_e}  (inside L_orth)")
+        logger.info(f"  temperature={temperature}, distill_lambda={distill_lambda}  (inside L_distill)")
         logger.info(f"Loss switches:")
         logger.info(f"  L_global:    {use_global_loss}")
         logger.info(f"  L_branch:    {use_branch_loss}")
         logger.info(f"  L_orth:     {use_orthogonality_loss}")
         logger.info(f"  L_distill:   {use_distillation_loss}")
-        logger.info(f"Parameters:")
-        logger.info(f"  tau_s: {tau_s}, tau_e: {tau_e}")
-        logger.info(f"  temperature: {temperature}, lambda_distill: {lambda_distill}")
         logger.info("=" * 60)
 
     def compute_global_loss(
@@ -166,13 +178,21 @@ class UPSTARLoss(nn.Module):
         z_other: torch.Tensor
     ) -> torch.Tensor:
         """
-        Stage 3: Orthogonality loss
+        Stage 3: Orthogonality loss (Paper Section 3.3)
 
-        Constrains z_other to be orthogonal to z_stab and z_expl:
-        L_orth = tau_s * dot(z_other, z_stab)^2 + tau_e * dot(z_other, z_expl)^2
+        Per paper:
+            L_orth = τ_s * z_other^T z_stab + τ_e * z_other^T z_expl
+
+        Engineering: compute dot product per sample, then mean over batch.
+        - z_other^T z_stab = sum_d z_other[b,d] * z_stab[b,d]   → scalar per sample
+        - Loss = mean over batch of (τ_s * dot_s + τ_e * dot_e)
+        - No normalization: paper uses raw dot product
+        - No squared term: paper uses linear dot product
 
         Args:
-            z_stab, z_expl, z_other: [batch_size, hidden_dim]
+            z_stab:   [batch_size, hidden_dim]
+            z_expl:   [batch_size, hidden_dim]
+            z_other:  [batch_size, hidden_dim]
 
         Returns:
             loss: scalar
@@ -180,17 +200,13 @@ class UPSTARLoss(nn.Module):
         if not self.use_orthogonality_loss:
             return torch.tensor(0.0, device=z_stab.device)
 
-        # Normalize
-        z_stab_norm = F.normalize(z_stab, dim=1)
-        z_expl_norm = F.normalize(z_expl, dim=1)
-        z_other_norm = F.normalize(z_other, dim=1)
+        # Per-sample dot products (no normalization -- paper literal)
+        # z_other[b] · z_stab[b] = sum_d z_other[b,d] * z_stab[b,d]
+        dot_s = (z_other * z_stab).sum(dim=1)    # [batch_size]
+        dot_e = (z_other * z_expl).sum(dim=1)    # [batch_size]
 
-        # Dot products (similarity)
-        dot_s = (z_other_norm * z_stab_norm).sum(dim=1)  # [batch_size]
-        dot_e = (z_other_norm * z_expl_norm).sum(dim=1)  # [batch_size]
-
-        # Squared and weighted
-        loss = self.tau_s * dot_s.pow(2).mean() + self.tau_e * dot_e.pow(2).mean()
+        # Mean over batch, weighted by τ_s and τ_e
+        loss = self.tau_s * dot_s.mean() + self.tau_e * dot_e.mean()
 
         return loss
 
@@ -202,102 +218,112 @@ class UPSTARLoss(nn.Module):
         motivation_labels: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Stage 4: Dual teacher-student distillation loss
+        Stage 4: Dual teacher-student distillation loss (Paper Section 3.3)
 
-        If target item is stable (label=1): S-model teaches E-model
-        If target item is exploratory (label=0): E-model teaches S-model
+        Conditional distillation based on target item motivation:
+        - If target is stable    (label==1): S → E  (S teaches E)
+        - If target is exploratory (label==0): E → S  (E teaches S)
+        - If target is uncategorized (label==2): NO distillation
+
+        KL divergence with temperature:
+            L = λ * KL( softmax(teacher/T),  log_softmax(student/T) )
 
         Args:
-            y_hat_stab: [batch_size, num_items+1] - S-model predictions
-            y_hat_expl: [batch_size, num_items+1] - E-model predictions
-            targets: [batch_size] - target items
-            motivation_labels: [batch_size] - motivation of target items
+            y_hat_stab:       [batch_size, num_items+1] - S-model logits
+            y_hat_expl:       [batch_size, num_items+1] - E-model logits
+            targets:           [batch_size]              - unused here
+            motivation_labels: [batch_size]              - motivation of each target item
+                                                         - 1=stable, 0=exploratory, 2=uncategorized
 
         Returns:
             {
-                'loss_distill': scalar,
-                's_teaches_e': float,  # Number of times S teaches E
-                'e_teaches_s': float   # Number of times E teaches S
+                'loss_distill':  scalar,
+                'loss_s_to_e':  scalar,   # L_S→E  (S teaches E on stable targets)
+                'loss_e_to_s':  scalar,   # L_E→S  (E teaches S on exploratory targets)
+                's_teaches_e':  float,    # batch count where S→E fires
+                'e_teaches_s':  float     # batch count where E→S fires
             }
         """
         if not self.use_distillation_loss:
             return {
                 'loss_distill': torch.tensor(0.0, device=y_hat_stab.device),
+                'loss_s_to_e': torch.tensor(0.0, device=y_hat_stab.device),
+                'loss_e_to_s': torch.tensor(0.0, device=y_hat_stab.device),
                 's_teaches_e': 0.0,
                 'e_teaches_s': 0.0
             }
 
         batch_size = targets.shape[0]
+        device = y_hat_stab.device
 
-        # motivation_labels is already [batch_size] — each sample's target motivation
-        # (computed in dataset as motivation_labels[target_item])
-        target_motivations = motivation_labels  # [batch_size]
+        # ------------------------------------------------------------------
+        # 1. Construct conditional masks from motivation_labels
+        # ------------------------------------------------------------------
+        # stable_mask:    samples whose target item has stable motivation (label==1)
+        # expl_mask:      samples whose target item has exploratory motivation (label==0)
+        # uncategorized:  samples where label==2 → NO distillation
+        stable_mask = (motivation_labels == 1)   # [batch_size]
+        expl_mask   = (motivation_labels == 0)    # [batch_size]
 
-        # Count stable and exploratory targets
-        num_stable_targets = (target_motivations == 1).sum().item()
-        num_expl_targets = (target_motivations == 0).sum().item()
+        num_stable = stable_mask.sum().item()
+        num_expl   = expl_mask.sum().item()
 
-        # If no stable or exploratory targets, skip
-        if num_stable_targets == 0 and num_expl_targets == 0:
-            return {
-                'loss_distill': torch.tensor(0.0, device=y_hat_stab.device),
-                's_teaches_e': 0.0,
-                'e_teaches_s': 0.0
-            }
+        loss_s_to_e = torch.tensor(0.0, device=device)
+        loss_e_to_s = torch.tensor(0.0, device=device)
 
-        total_loss = torch.tensor(0.0, device=y_hat_stab.device)
+        # ------------------------------------------------------------------
+        # 2. L_S→E: S teaches E on stable targets
+        #    teacher = S-model, student = E-model
+        # ------------------------------------------------------------------
+        if num_stable > 0:
+            teacher_s_to_e = y_hat_stab[stable_mask].detach()      # teacher: detach, no grad
+            student_s_to_e = y_hat_expl[stable_mask]                # student: keep grad
 
-        # Case 1: S teaches E (target is stable)
-        if num_stable_targets > 0:
-            # Stable targets: S-model predictions as teacher
-            teacher_logits = y_hat_stab[target_motivations == 1]  # [num_stable_targets, num_items+1]
-            student_logits = y_hat_expl[target_motivations == 1]  # [num_stable_targets, num_items+1]
+            # Soft targets + temperature
+            p_teacher = torch.softmax(teacher_s_to_e / self.temperature, dim=1)
+            log_p_student = torch.log_softmax(student_s_to_e / self.temperature, dim=1)
 
-            # KL divergence
-            # F.kl_div expects log_prob (first) and prob (second)
-            teacher_prob = torch.softmax(teacher_logits / self.temperature, dim=1)
-            student_log_prob = F.log_softmax(student_logits / self.temperature, dim=1)
-
-            kl_div = F.kl_div(
-                student_log_prob,
-                teacher_prob,
+            # KL(teacher || student) = sum p * (log p - log q)
+            # reduction='batchmean': divides by batch_size within each subset
+            kl_s_to_e = torch.nn.functional.kl_div(
+                log_p_student,
+                p_teacher,
                 reduction='batchmean'
             )
 
-            # Apply distillation weight
-            # Only weight by self.distill_lambda, not by temperature^2 (handled in KL)
-            weighted_loss = self.distill_lambda * kl_div
+            # Apply distillation weight λ
+            loss_s_to_e = self.distill_lambda * kl_s_to_e
 
-            # Normalize by batch
-            weighted_loss = weighted_loss * (batch_size / num_stable_targets)
+        # ------------------------------------------------------------------
+        # 3. L_E→S: E teaches S on exploratory targets
+        #    teacher = E-model, student = S-model
+        # ------------------------------------------------------------------
+        if num_expl > 0:
+            teacher_e_to_s = y_hat_expl[expl_mask].detach()        # teacher: detach, no grad
+            student_e_to_s = y_hat_stab[expl_mask]                  # student: keep grad
 
-            total_loss += weighted_loss
+            p_teacher = torch.softmax(teacher_e_to_s / self.temperature, dim=1)
+            log_p_student = torch.log_softmax(student_e_to_s / self.temperature, dim=1)
 
-        # Case 2: E teaches S (target is exploratory)
-        if num_expl_targets > 0:
-            # Exploratory targets: E-model predictions as teacher
-            teacher_logits = y_hat_expl[target_motivations == 0]  # [num_expl_targets, num_items+1]
-            student_logits = y_hat_stab[target_motivations == 0]  # [num_expl_targets, num_items+1]
-
-            # F.kl_div expects log_prob (first) and prob (second)
-            teacher_prob = torch.softmax(teacher_logits / self.temperature, dim=1)
-            student_log_prob = F.log_softmax(student_logits / self.temperature, dim=1)
-
-            kl_div = F.kl_div(
-                student_log_prob,
-                teacher_prob,
+            kl_e_to_s = torch.nn.functional.kl_div(
+                log_p_student,
+                p_teacher,
                 reduction='batchmean'
             )
 
-            weighted_loss = self.distill_lambda * kl_div
-            weighted_loss = weighted_loss * (batch_size / num_expl_targets)
+            loss_e_to_s = self.distill_lambda * kl_e_to_s
 
-            total_loss += weighted_loss
+        # ------------------------------------------------------------------
+        # 4. Combine: both terms summed, weighted by λ in each branch
+        # ------------------------------------------------------------------
+        loss_distill = loss_s_to_e + loss_e_to_s
 
         return {
-            'loss_distill': total_loss,
-            's_teaches_e': num_stable_targets,
-            'e_teaches_s': num_expl_targets
+            'loss_distill': loss_distill,
+            'loss_s_to_e':  loss_s_to_e,    # S→E term
+            'loss_e_to_s':  loss_e_to_s,    # E→S term
+            's_teaches_e':  float(num_stable),
+            'e_teaches_s':  float(num_expl)
         }
 
     def forward(
@@ -358,6 +384,8 @@ class UPSTARLoss(nn.Module):
         else:
             distill_losses = {
                 'loss_distill': torch.tensor(0.0, device=targets.device),
+                'loss_s_to_e': torch.tensor(0.0, device=targets.device),
+                'loss_e_to_s': torch.tensor(0.0, device=targets.device),
                 's_teaches_e': 0.0,
                 'e_teaches_s': 0.0
             }
@@ -382,51 +410,39 @@ class UPSTARLoss(nn.Module):
 # Helper function to create loss from config
 def create_loss_from_config(config: dict) -> UPSTARLoss:
     """
-    Create UPSTARLoss from configuration
+    Create UPSTARLoss from configuration.
 
-    Args:
-        config: configuration dict
+    All values should come from config['training'] which is aligned with
+    the paper (see tafeng_upstar.yaml for documentation).
 
     Returns:
         UPSTARLoss instance
     """
-    # Training config
     training = config['training']
-
-    # Loss weights
-    lambda_global = training.get('lambda_global', 1.0)
-    lambda_branch = training.get('lambda_branch', 0.5)
-    lambda_ortho = training.get('lambda_ortho', 0.1)
-    lambda_distill = training.get('lambda_distill', 0.3)
-
-    # Loss switches
-    use_global_loss = training.get('use_global_loss', True)
-    use_branch_loss = training.get('use_branch_loss', False)
-    use_orthogonality_loss = training.get('use_orthogonality_loss', False)
-    use_distillation_loss = training.get('use_distillation_loss', False)
-
-    # Orthogonality parameters
-    tau_s = training.get('tau_s', 0.5)
-    tau_e = training.get('tau_e', 0.5)
-
-    # Distillation parameters
-    temperature = training.get('distill_temperature', 3.0)
-    lambda_distill_training = training.get('lambda_distill', 0.7)
     num_items = config['model']['num_items']
 
     return UPSTARLoss(
-        lambda_global=lambda_global,
-        lambda_branch=lambda_branch,
-        lambda_ortho=lambda_ortho,
-        lambda_distill=lambda_distill_training,
-        use_global_loss=use_global_loss,
-        use_branch_loss=use_branch_loss,
-        use_orthogonality_loss=use_orthogonality_loss,
-        use_distillation_loss=use_distillation_loss,
-        tau_s=tau_s,
-        tau_e=tau_e,
-        temperature=temperature,
-        distill_lambda=lambda_distill_training,
+        # ── Loss weights ─────────────────────────────────────────────
+        # L_total = λ_global*L_global + λ_branch*L_S&E&O + λ_ortho*L_orth + λ_distill*L_distill
+        lambda_global=training.get('lambda_global', 1.0),   # paper: 1.0
+        lambda_branch=training.get('lambda_branch', 0.7),   # paper: λ=0.7
+        lambda_ortho=training.get('lambda_ortho', 1.0),    # τ_s,τ_e already inside L_orth
+        lambda_distill=training.get('lambda_distill', 1.0),  # distill_lambda already inside L_distill
+
+        # ── Loss switches (for staged curriculum) ──────────────────────
+        use_global_loss=training.get('use_global_loss', True),
+        use_branch_loss=training.get('use_branch_loss', False),
+        use_orthogonality_loss=training.get('use_orthogonality_loss', False),
+        use_distillation_loss=training.get('use_distillation_loss', False),
+
+        # ── L_orth parameters (inside L_orth) ─────────────────────────
+        tau_s=training.get('tau_s', 0.5),   # paper: τ_s = 0.5
+        tau_e=training.get('tau_e', 0.5),   # paper: τ_e = 0.5
+
+        # ── L_distill parameters (inside L_distill) ──────────────────
+        temperature=training.get('distill_temperature', 3.0),
+        distill_lambda=training.get('distill_lambda', 0.7),  # paper: λ = 0.7
+
         num_items=num_items
     )
 

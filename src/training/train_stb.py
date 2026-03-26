@@ -100,7 +100,8 @@ def compute_stb_scores(
     graph_device = {
         'node_features': graph['node_features'].to(device),
         'edge_index': graph['edge_index'].to(device),
-        'item_node_indices': graph['item_node_indices'].to(device)
+        'item_node_indices': graph['item_node_indices'].to(device),
+        'time_node_indices': graph['time_node_indices'].to(device)
     }
 
     # Compute original representations
@@ -114,7 +115,7 @@ def compute_stb_scores(
 
     # Perturbation rounds
     num_rounds = config['stb']['perturbation_rounds']
-    all_similarities = []
+    all_perturbed_repr = []
 
     perturbation = CombinedPerturbation(
         noise_std=config['stb']['feature_noise_std'],
@@ -143,13 +144,32 @@ def compute_stb_scores(
                 perturbed_graph_device['item_node_indices']
             )
 
-        # Compute stability (cosine similarity)
-        similarity = scorer.compute_stability_score(original_repr, perturbed_repr)
-        all_similarities.append(similarity.cpu())
+        all_perturbed_repr.append(perturbed_repr.cpu())
 
-    # Average across rounds
-    all_similarities = torch.stack(all_similarities, dim=0)  # [num_rounds, num_items]
-    stb_scores = all_similarities.mean(dim=0)  # [num_items]
+    # Stack all perturbed representations: [num_rounds, num_items, dim]
+    all_perturbed_repr = torch.stack(all_perturbed_repr, dim=0)
+
+    # Compute STB scores with worst-case aggregation (internal min over rounds)
+    if scorer.use_mi and scorer.mi_estimator is not None:
+        # MI mode: need graph summary with item/time separation
+        # Explicitly pass item_node_indices and time_node_indices for accurate summary
+        graph_summary = scorer.compute_graph_summary(
+            graph_device['node_features'],
+            graph_device['edge_index'],
+            item_node_indices=graph_device['item_node_indices'],
+            time_node_indices=graph_device['time_node_indices']
+        )
+        stb_scores = scorer.compute_stability_score(
+            original_repr.cpu(),
+            all_perturbed_repr,
+            graph_summary.cpu()
+        )
+    else:
+        # Baseline mode: cosine similarity
+        stb_scores = scorer.compute_stability_score(
+            original_repr.cpu(),
+            all_perturbed_repr
+        )
 
     logger.info(f"STB scores computed:")
     logger.info(f"  Min: {stb_scores.min():.4f}")
@@ -167,50 +187,115 @@ def classify_motivations(
     """
     Classify items into motivation types based on STB scores
 
-    Rules:
-    - Top 50% stb_score -> stable (label=1)
-    - Bottom 40% stb_score -> exploratory (label=0)
-    - Middle 10% -> uncategorized (label=2)
+    ===================================================================
+    PAPER ALIGNMENT (Section 3.1.4: Motivation Classification)
+    ===================================================================
+    Classification rule:
+      - Top 50% STB scores → stable preference (label=1)
+      - Bottom 40% STB scores → exploratory intent (label=0)
+      - Middle 10% → uncategorized (label=2)
+
+    ===================================================================
+    ENGINEERING APPROXIMATION
+    ===================================================================
+    Current implementation uses GLOBAL ranking across all items:
+      1. Sort all items by STB score (descending)
+      2. Apply threshold ratios globally
+
+    The paper does not specify whether ranking should be:
+      - Global (all items together) ← CURRENT IMPLEMENTATION
+      - Per-user (within each user's purchased items)
+      - Per-time-period (within each time window)
+
+    This global ranking is an engineering approximation that works well
+    for datasets where item popularity follows a power law distribution.
+
+    Future work: Experiment with per-user or per-time ranking strategies.
+
+    ===================================================================
 
     Args:
-        stb_scores: [num_items]
-        config: configuration
+        stb_scores: [num_items] - STB stability scores (higher = more stable)
+        config: configuration dict with 'stb.stable_ratio' and 'stb.exploratory_ratio'
 
     Returns:
-        labels: [num_items] - 0=exploratory, 1=stable, 2=uncategorized
+        labels: [num_items] - motivation labels
+            - 0 = exploratory intent
+            - 1 = stable preference
+            - 2 = uncategorized
     """
     logger.info("Classifying motivations...")
 
     num_items = stb_scores.shape[0]
 
-    # Sort scores
-    sorted_scores, sorted_indices = torch.sort(stb_scores)
+    # Read thresholds from config (paper-aligned: 0.5 and 0.4)
+    stable_ratio = config['stb']['stable_ratio']        # Paper: 0.5
+    exploratory_ratio = config['stb']['exploratory_ratio']  # Paper: 0.4
 
-    # Initialize labels as exploratory (0)
+    # Validate ratios sum to ≤ 1.0
+    if stable_ratio + exploratory_ratio > 1.0:
+        logger.warning(
+            f"Classification thresholds sum to {stable_ratio + exploratory_ratio:.2f} > 1.0, "
+            f"clamping exploratory_ratio to {1.0 - stable_ratio:.2f}"
+        )
+        exploratory_ratio = 1.0 - stable_ratio
+
+    # ===================================================================
+    # GLOBAL RANKING (engineering approximation)
+    # ===================================================================
+    # Sort all items by STB score (descending: highest = most stable)
+    # ===================================================================
+    sorted_scores, sorted_indices = torch.sort(stb_scores, descending=False)
+
+    # Initialize all labels as exploratory (0)
     labels = torch.zeros(num_items, dtype=torch.long)
 
-    # Top 50% -> stable
-    num_stable = int(num_items * 0.5)
-    stable_indices = sorted_indices[-num_stable:]
-    labels[stable_indices] = 1
+    # ===================================================================
+    # Top X% → stable preference (label=1)
+    # ===================================================================
+    # Paper: "top 50% STB scores → stable preference"
+    # High STB = stable under worst-case perturbation = stable preference
+    # ===================================================================
+    num_stable = int(num_items * stable_ratio)
+    if num_stable > 0:
+        stable_indices = sorted_indices[-num_stable:]  # Last N items (highest scores)
+        labels[stable_indices] = 1
 
-    # Bottom 40% -> exploratory (already 0)
-    num_exploratory = int(num_items * 0.4)
+    # ===================================================================
+    # Bottom Y% → exploratory intent (label=0, already set)
+    # ===================================================================
+    # Paper: "bottom 40% STB scores → exploratory intent"
+    # Low STB = unstable under perturbation = exploratory intent
+    # ===================================================================
+    num_exploratory = int(num_items * exploratory_ratio)
+    # Labels are already 0 (exploratory), no need to explicitly set
 
-    # Middle 10% -> uncategorized
+    # ===================================================================
+    # Middle → uncategorized (label=2)
+    # ===================================================================
+    # Paper: "remaining 10% → uncategorized"
+    # These items have moderate STB scores, not clearly stable or exploratory
+    # ===================================================================
     num_uncategorized = num_items - num_stable - num_exploratory
-    uncategorized_indices = sorted_indices[num_exploratory:num_exploratory + num_uncategorized]
-    labels[uncategorized_indices] = 2
+    if num_uncategorized > 0:
+        # Middle items: indices [num_exploratory : num_exploratory + num_uncategorized]
+        uncategorized_indices = sorted_indices[num_exploratory:num_exploratory + num_uncategorized]
+        labels[uncategorized_indices] = 2
 
-    # Statistics
-    num_stable = (labels == 1).sum().item()
-    num_exploratory = (labels == 0).sum().item()
-    num_uncategorized = (labels == 2).sum().item()
+    # ===================================================================
+    # Statistics & Logging
+    # ===================================================================
+    num_stable_final = (labels == 1).sum().item()
+    num_exploratory_final = (labels == 0).sum().item()
+    num_uncategorized_final = (labels == 2).sum().item()
 
-    logger.info("Motivation classification:")
-    logger.info(f"  Stable:       {num_stable:6d} ({num_stable/num_items*100:.1f}%)")
-    logger.info(f"  Exploratory:  {num_exploratory:6d} ({num_exploratory/num_items*100:.1f}%)")
-    logger.info(f"  Uncategorized: {num_uncategorized:6d} ({num_uncategorized/num_items*100:.1f}%)")
+    logger.info("Motivation classification (GLOBAL RANKING):")
+    logger.info(f"  Stable (top {stable_ratio:.0%}):       "
+               f"{num_stable_final:6d} ({num_stable_final/num_items*100:.1f}%)")
+    logger.info(f"  Exploratory (bottom {exploratory_ratio:.0%}):  "
+               f"{num_exploratory_final:6d} ({num_exploratory_final/num_items*100:.1f}%)")
+    logger.info(f"  Uncategorized (middle):       "
+               f"{num_uncategorized_final:6d} ({num_uncategorized_final/num_items*100:.1f}%)")
 
     return labels
 

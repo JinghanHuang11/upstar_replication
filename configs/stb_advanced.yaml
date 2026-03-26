@@ -41,9 +41,9 @@ advanced:
 
   # Upgrade 1: PGD Feature Perturbation
   upgrade1:
-    epsilon: 0.1          # L∞ budget
-    num_steps: 10         # PGD steps
-    step_size: 0.01       # PGD step size
+    epsilon: 0.1          # L∞ budget  (paper: ε_x = 0.1)
+    num_steps: 10         # PGD steps  (paper: β = 40 total rounds, steps per round)
+    step_size: 0.4        # PGD step size  (paper: α = 0.4)
     loss_type: 'repr_change'
 
   # Upgrade 2: Continuous Topology Perturbation

@@ -1,7 +1,14 @@
-# STB Computation Configuration
+# ================================================================================
+# STB Computation Configuration (Phase 3: Purchase Motivation Identification)
+# ================================================================================
+# Paper Reference: UPSTAR - Section 3.1.3 (STB Definition) & Section 7.1 (Implementation)
 #
-# Paper Reference: UPSTAR - Section 7 (Implementation Details)
-# All hyperparameters aligned with paper specifications
+# This configuration controls the computation of Stable Transaction Bias (STB) scores
+# and the classification of items into motivation types (stable/exploratory/uncategorized).
+#
+# Key parameters aligned with paper specifications are marked with "Paper:" comments.
+# Engineering approximations are clearly marked as such.
+# ================================================================================
 
 defaults:
   - base
@@ -13,70 +20,130 @@ dataset:
   min_item_frequency: 2
   cache_dir: data/cache/tafeng/
 
-# Model (Section 7.1: Motivation Identification)
+# ================================================================================
+# Model Architecture (Section 7.1: STB GNN Encoder)
+# ================================================================================
 model:
   input_dim: 128        # Item embedding dimension from Phase 2
   hidden_dim: 512       # Paper: STB encoder hidden size = 512
-  num_layers: 1         # Paper: STB GNN layers = 1
-  dropout: 0.1
+  num_layers: 1         # Paper: STB GNN layers = 1 (1-layer aggregation)
+  dropout: 0.1          # Paper: dropout rate for regularization
 
-# Optimizer (Section 7.1)
+# ================================================================================
+# Optimizer (for training MI estimator, NOT for STB computation itself)
+# ================================================================================
 optimizer:
   type: 'adam'
-  learning_rate: 0.001   # Paper: lr = 1e-3
+  learning_rate: 0.001   # Paper: lr = 1e-3 (for MI estimator training)
 
-# STB Computation (Section 7.1: Perturbation Parameters)
+# ================================================================================
+# STB Computation Parameters (Section 3.1.3 & Section 7.1)
+# ================================================================================
 stb:
-  # Perturbation rounds
-  perturbation_rounds: 40    # Paper: β = 40
+  # -------------------------------------------------------------------------
+  # Perturbation Budgets (Paper: ε_x, ε_a, α, β)
+  # -------------------------------------------------------------------------
+  # These define the adversarial perturbation constraints for STB computation
+  # -------------------------------------------------------------------------
 
-  # Feature perturbation (PGD)
-  feature_step_size: 0.4     # Paper: α = 0.4
+  # Number of perturbation rounds (β)
+  # Paper: β = 40 rounds to approximate inf_{S'∈B_t}
+  perturbation_rounds: 40
 
-  # Feature perturbation budget
-  epsilon_x: 0.1             # Paper: ε_x = 0.1
+  # Feature perturbation step size (α)
+  # Paper: α = 0.4 for PGD updates
+  feature_step_size: 0.4
 
-  # Edge perturbation budget
-  epsilon_a: 0.1             # Paper: ε_a = 0.1
-  epsilon: 0.1               # Paper: ε = 0.1
+  # Feature perturbation budget (ε_x)
+  # Paper: ε_x = 0.1 (ℓ∞ budget on node feature perturbations)
+  epsilon_x: 0.1
 
-  # Time graph parameters (Section 7.1)
-  time_granularity: 'day'    # Paper: day-level time nodes
-  num_time_nodes: 50          # Paper: ρ = 50
+  # Edge/topology perturbation budget (ε_a)
+  # Paper: ε_a = 0.1 (fraction of edges that can be modified)
+  epsilon_a: 0.1
 
-  # Classification thresholds (Section 3.1.4)
-  stable_ratio: 0.5          # Paper: top 50% as stable
-  exploratory_ratio: 0.4      # Paper: bottom 40% as exploratory
-  # remaining 10% = uncategorized
+  # Overall perturbation budget (ε)
+  # Paper: ε = 0.1 (overall constraint on combined perturbations)
+  epsilon: 0.1
 
-  # Legacy perturbation parameters (used by CombinedPerturbation)
-  feature_noise_std: 0.1
-  edge_removal_rate: 0.1
-  edge_addition_rate: 0.1
+  # -------------------------------------------------------------------------
+  # Item-Time Graph Construction (Section 7.1)
+  # -------------------------------------------------------------------------
+  # These define the attributed item-time bipartite graph structure
+  # -------------------------------------------------------------------------
 
-  # Output paths (used by phases.py to collect results)
+  # Time granularity for time nodes
+  # Paper: day-level time nodes (preferred over hour/week)
+  time_granularity: 'day'
+
+  # Number of time nodes (ρ)
+  # Paper: ρ = 50 (number of unique time nodes)
+  # Note: If dataset has fewer unique days, actual number will be smaller
+  num_time_nodes: 50
+
+  # -------------------------------------------------------------------------
+  # Motivation Classification Thresholds (Section 3.1.4)
+  # -------------------------------------------------------------------------
+  # These define how STB scores are mapped to motivation labels
+  # -------------------------------------------------------------------------
+  #
+  # Classification rule (ENGINEERING APPROXIMATION):
+  #   1. Sort ALL items globally by STB score (descending)
+  #   2. Top 50% → stable preference (label=1)
+  #   3. Bottom 40% → exploratory intent (label=0)
+  #   4. Middle 10% → uncategorized (label=2)
+  #
+  # NOTE: This is a GLOBAL ranking approach, not per-user or per-time.
+  # The paper does not specify the exact ranking method, only the ratios.
+  # -------------------------------------------------------------------------
+
+  # Stable preference threshold
+  # Paper: top 50% of items by STB score classified as stable
+  stable_ratio: 0.5
+
+  # Exploratory intent threshold
+  # Paper: bottom 40% of items by STB score classified as exploratory
+  exploratory_ratio: 0.4
+  # Remaining 10% = uncategorized (implicitly 1 - 0.5 - 0.4 = 0.1)
+
+  # -------------------------------------------------------------------------
+  # Legacy Parameters (V1 Baseline Only - NOT Paper-Aligned)
+  # -------------------------------------------------------------------------
+  # These are used ONLY when advanced PGD perturbation is disabled.
+  # They are engineering approximations, NOT paper symbols.
+  # -------------------------------------------------------------------------
+  feature_noise_std: 0.1      # V1 only: Gaussian noise std (NOT ε_x)
+  edge_removal_rate: 0.1      # V1 only: random edge removal rate (NOT ε_a)
+  edge_addition_rate: 0.1     # V1 only: random edge addition rate (NOT ε_a)
+
+  # -------------------------------------------------------------------------
+  # Output Paths
+  # -------------------------------------------------------------------------
   stb_scores_path: outputs/phase3_stb/checkpoints/stb_scores.npy
   motivation_labels_path: outputs/phase3_stb/checkpoints/motivation_labels.npy
   item_embeddings_path: outputs/phase2_item_repr/checkpoints/item_embeddings.pt
 
-# Backward compatibility (legacy parameters)
-# These are used if advanced perturbation is disabled
-feature_noise_std: 0.1
-edge_removal_rate: 0.1
-edge_addition_rate: 0.1
-
-# Evaluation
+# ================================================================================
+# Evaluation (for Phase 5 comparison)
+# ================================================================================
 evaluation:
   k_values: [5, 10, 20]
 
+# ================================================================================
 # Reproducibility
+# ================================================================================
 seed: 42
 deterministic: true
 
+# ================================================================================
+# External Dependencies
+# ================================================================================
 # Item embeddings from Phase 2
 item_embeddings_path: outputs/phase2_item_repr/checkpoints/item_embeddings.pt
 
+# ================================================================================
 # Logging
+# ================================================================================
 logging:
   log_dir: outputs/phase3_stb/logs/
   checkpoint_dir: outputs/phase3_stb/checkpoints/

@@ -68,28 +68,34 @@ class EdgePerturbation:
         num_items: int
     ) -> torch.Tensor:
         """
-        Perturb edges: remove some, add some
+        Perturb edges: remove some, add some (paper: bipartite item-time graph only)
+
+        CRITICAL: Preserves bipartite structure — only adds item→time edges.
+        Source nodes: [0, num_items)  (item side)
+        Target nodes: [num_items, num_nodes)  (time side)
 
         Args:
-            edge_index: [2, num_edges]
-            num_nodes: total nodes
+            edge_index: [2, num_edges] — should only contain item→time edges
+            num_nodes: total nodes = num_items + num_times
             num_items: number of item nodes
 
         Returns:
-            perturbed_edge_index: [2, num_edges']
+            perturbed_edge_index: [2, num_edges'] — still bipartite
         """
         num_edges = edge_index.shape[1]
+        num_times = num_nodes - num_items
 
         # Edge removal
         keep_mask = torch.rand(num_edges) > self.removal_rate
         kept_edges = edge_index[:, keep_mask]
 
-        # Edge addition
+        # Edge addition — enforce bipartite structure
         num_add = int(num_edges * self.addition_rate)
         if num_add > 0:
-            # Add random edges (prefer item-item or item-time)
-            new_src = torch.randint(0, num_items, (num_add,))
-            new_dst = torch.randint(0, num_nodes, (num_add,))
+            # Source: item nodes only [0, num_items)
+            # Target: time nodes only [num_items, num_nodes)
+            new_src = torch.randint(0, num_items, (num_add,), device=edge_index.device)
+            new_dst = torch.randint(num_items, num_nodes, (num_add,), device=edge_index.device)
             new_edges = torch.stack([new_src, new_dst], dim=0)
 
             perturbed_edges = torch.cat([kept_edges, new_edges], dim=1)

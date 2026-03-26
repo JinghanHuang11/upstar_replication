@@ -295,10 +295,11 @@ if __name__ == '__main__':
     print(f"  p_other:  {output['p_other'].shape}")
     print(f"  p_global: {output['p_global'].shape}")
 
-    print("\nGate weights:")
-    print(f"  gate_weights: {output['gate_weights'].shape}")
-    print(f"  Avg: stab={output['gate_stab'].mean():.4f}, "
-          f"expl={output['gate_expl'].mean():.4f}, "
-          f"other={output['gate_other'].mean():.4f}")
+    print("\nGate weights (per-dim fusion):")
+    print(f"  gate_weights (f_s): {output['gate_weights'].shape}")  # [B, hidden, 3]
+    gate_repr = output['gate_repr']
+    print(f"  Mean per-dim: stab={gate_repr['gate_stab'].mean():.4f}, "
+          f"expl={gate_repr['gate_expl'].mean():.4f}, "
+          f"other={gate_repr['gate_other'].mean():.4f}")
 
     print("\nUPSTAR model test passed!")

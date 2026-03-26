@@ -1,13 +1,42 @@
-# UPSTAR Model Configuration for Ta-Feng Dataset
-# Full three-path model with staged loss training
+# UPSTAR Training Configuration for Ta-Feng Dataset
 #
-# Paper Reference: UPSTAR - Section 7 (Implementation Details)
-# All hyperparameters aligned with paper specifications
+# Paper Reference: UPSTAR - Sections 3.1.4, 3.3, 7.3, 7.4
+#
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │  PAPER JOINT LOSS FORMULA (Section 3.3)                              │
+# │                                                                      │
+# │    L_total = L_global                                                │
+# │             + λ * L_S&E&O                                           │
+# │             + L_orth                                                 │
+# │             + L_distill                                               │
+# │                                                                      │
+# │    L_global  = CE(y_hat_global, target)            [Section 3.1.4]  │
+# │    L_S&E&O = CE(y_hat_stab, target)                               │
+# │              + CE(y_hat_expl, target)                              │
+# │              + CE(y_hat_other, target)           [Section 3.1.4]  │
+# │    L_orth   = τ_s * z_other^T z_stab                             │
+# │              + τ_e * z_other^T z_expl          [Section 3.3]      │
+# │    L_distill = conditional dual teacher-student KL  [Section 3.3] │
+# └──────────────────────────────────────────────────────────────────────┘
+#
+# STAGED CURRICULUM (engineering, NOT paper modification):
+#   Stage 1: L_global only
+#   Stage 2: + λ * L_S&E&O
+#   Stage 3: + L_orth
+#   Stage 4: + L_distill
+#   The final model (after all 4 stages) optimizes the joint formula above.
+#
+# LEGEND:
+#   [PAPER]  = value directly from or implied by the paper
+#   [ENG]    = engineering decision / safe default
+#   [OLD]    = legacy value kept for backward compatibility
 
 defaults:
   - base
 
+# ─────────────────────────────────────────────────────────────────────────
 # Dataset
+# ─────────────────────────────────────────────────────────────────────────
 dataset:
   name: tafeng
   data_dir: data/raw/
@@ -15,98 +44,118 @@ dataset:
   min_item_frequency: 2
   cache_dir: data/cache/tafeng/
 
-# Model Configuration (Section 7.3: Model Hyperparameters)
+# ─────────────────────────────────────────────────────────────────────────
+# Model (Section 7.3)
+# ─────────────────────────────────────────────────────────────────────────
 model:
-  num_items: null  # Will be loaded from metadata
-  embed_dim: 64
-  hidden_dim: 128          # Paper: hidden_size = 128
-  num_layers: 4            # Paper: num_layers = 4
+  num_items: null            # Will be loaded from metadata
+  embed_dim: 64              # [PAPER] Section 7.3
+  hidden_dim: 128           # [PAPER] hidden_size = 128
+  num_layers: 4             # [PAPER] num_layers = 4
   dropout: 0.2
-  use_gate: true
+  use_gate: true            # Per-dim fusion gate
   max_seq_length: 50
 
-# Training (Section 7.4: Optimization Settings)
+# ─────────────────────────────────────────────────────────────────────────
+# Training (Section 7.4)
+# ─────────────────────────────────────────────────────────────────────────
 training:
-  batch_size: 64           # Paper: batch_size = 64
-  learning_rate: 0.0003    # Paper: lr = 3e-4
-  weight_decay: 0.00001
+  # ── Optimization ───────────────────────────────────────────────────
+  optimizer: adam            # [PAPER] Section 7.4
+  learning_rate: 0.0003      # [PAPER] lr = 3e-4
+  weight_decay: 0.00001     # [ENG]
 
-  # Staged training configuration
-  max_epochs_per_stage: 10
-  early_stop_patience: 3
-  metric_for_best: 'NDCG@10'
+  # ── Batch ────────────────────────────────────────────────────────────
+  batch_size: 64             # [PAPER] batch_size = 64
 
-  # Loss weights (for total loss computation)
-  lambda_global: 1.0
-  lambda_branch: 0.5
-  lambda_ortho: 0.1
-  lambda_distill: 0.3      # Note: This weights L_distill in total loss
+  # ── Early stopping ──────────────────────────────────────────────────
+  max_epochs_per_stage: 10  # [ENG]
+  early_stop_patience: 3    # [ENG]
+  metric_for_best: 'NDCG@10'  # [ENG] paper main table uses NDCG@20
 
-  # Stage 1: Global loss only
+  # ── Loss weights ────────────────────────────────────────────────────
+  # L_total = λ_global*L_global + λ_branch*L_S&E&O + λ_ortho*L_orth + λ_distill*L_distill
+  #
+  # λ_branch=0.7: [PAPER] λ=0.7 in the paper's combined loss for L_S&E&O
+  # λ_ortho=1.0: τ_s and τ_e already inside L_orth; no extra multiplier needed
+  # λ_distill=1.0: distill_lambda already inside L_distill; no extra multiplier needed
+  lambda_global: 1.0        # [PAPER] no additional weight
+  lambda_branch: 0.7         # [PAPER] λ = 0.7 (weights L_S&E&O)
+  lambda_ortho: 1.0         # [PAPER] τ_s, τ_e already inside L_orth
+  lambda_distill: 1.0       # [ENG]   distill_lambda already inside L_distill
+
+  # ── Staged curriculum (engineering only) ─────────────────────────────
+  # Each stage incrementally enables the next paper term.
+  # Stage 1: warm-up with L_global
   stage1:
     use_global_loss: true
     use_branch_loss: false
     use_orthogonality_loss: false
     use_distillation_loss: false
 
-  # Stage 2: Global + Branch losses
+  # Stage 2: add branch supervision (L_S&E&O)
   stage2:
     use_global_loss: true
     use_branch_loss: true
     use_orthogonality_loss: false
     use_distillation_loss: false
 
-  # Stage 3: Global + Branch + Orthogonality losses
+  # Stage 3: add orthogonality (L_orth)
   stage3:
     use_global_loss: true
     use_branch_loss: true
     use_orthogonality_loss: true
     use_distillation_loss: false
 
-  # Stage 4: All losses (Section 3.3: Dual Teacher–Student)
+  # Stage 4: add dual teacher-student (L_distill)
   stage4:
     use_global_loss: true
     use_branch_loss: true
     use_orthogonality_loss: true
     use_distillation_loss: true
 
-  # Orthogonality parameters (Section 3.3)
-  tau_s: 0.5              # Paper: τ_s = 0.5
-  tau_e: 0.5              # Paper: τ_e = 0.5
+  # ── L_orth parameters (inside L_orth) ────────────────────────────────
+  # L_orth = τ_s * z_other^T z_stab + τ_e * z_other^T z_expl
+  tau_s: 0.5               # [PAPER] τ_s = 0.5
+  tau_e: 0.5               # [PAPER] τ_e = 0.5
 
-  # Distillation parameters (Section 3.3)
-  distill_temperature: 3.0
-  lambda_distill: 0.7     # Paper: λ = 0.7 (weights teacher KL loss)
+  # ── L_distill parameters (inside L_distill) ─────────────────────────
+  # L_distill = λ * KL(teacher || student) per conditional teacher-student pair
+  distill_temperature: 3.0  # [ENG]  temperature for soft targets
+  distill_lambda: 0.7       # [PAPER] λ = 0.7 (inside L_distill computation)
 
-  # Logging
-  log_gate_interval: 10
+  # ── Logging ──────────────────────────────────────────────────────────
+  log_gate_interval: 10     # Log gate weights every N batches
   num_workers: 4
 
+# ──────────────────���──────────────────────────────────────────────────────
 # Evaluation
+# ─────────────────────────────────────────────────────────────────────────
 evaluation:
-  k_values: [1, 5, 10, 15, 20, 50]
+  k_values: [1, 5, 10, 15, 20, 50]  # Paper main table: @5, @20
   batch_size: 256
 
-# STB results (from Phase 3)
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 3: STB results
+# ─────────────────────────────────────────────────────────────────────────
 stb:
   stb_scores_path: outputs/phase3_stb/checkpoints/stb_scores.npy
   motivation_labels_path: outputs/phase3_stb/checkpoints/motivation_labels.npy
 
-# Item embeddings (from Phase 2)
-item_embeddings:
-  checkpoint_dir: outputs/phase2_item_repr/checkpoints/
-
-# Output paths (for UPSTAR)
+# ─────────────────────────────────────────────────────────────────────────
+# Output paths
+# ─────────────────────────────────────────────────────────────────────────
 logging:
   log_dir: outputs/phase4_upstar/logs/
   checkpoint_dir: outputs/phase4_upstar/checkpoints/
   prediction_dir: outputs/phase4_upstar/predictions/
 
-# Results
 results:
   output_dir: outputs/phase4_upstar/results/
   model_type: upstar
 
+# ─────────────────────────────────────────────────────────────────────────
 # Reproducibility
+# ─────────────────────────────────────────────────────────────────────────
 seed: 42
 deterministic: true

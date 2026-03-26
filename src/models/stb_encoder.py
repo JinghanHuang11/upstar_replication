@@ -90,38 +90,119 @@ class MIEstimator(nn.Module):
     def compute_graph_summary(
         self,
         node_features: torch.Tensor,
-        edge_index: torch.Tensor
+        edge_index: torch.Tensor,
+        item_node_indices: Optional[torch.Tensor] = None,
+        time_node_indices: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        Compute graph-level summary features
+        Compute graph-level summary features for attributed item-time bipartite graph
 
-        Simple approach: mean of node features
-        (Can be enhanced with attention pooling)
+        ENHANCED (2026-03): Separates item-side and time-side summaries to better capture
+        timing dependence and co-purchase patterns in the bipartite structure.
+
+        Paper semantics (Section 3.1.3):
+        - Attributed item-time graph encodes:
+          * item intrinsic attributes (item node features)
+          * timing dependence (time node connectivity patterns)
+          * co-purchase dependence (item-time bipartite edges)
+        - Exploratory intent often shows as:
+          * one-hop neighbors skewed toward specific time nodes
+          * two-hop relationships revealing co-purchase patterns
+        - Stable preference should remain stable under perturbations
 
         Args:
-            node_features: [num_nodes, feat_dim]
-            edge_index: [2, num_edges]
+            node_features: [num_nodes, feat_dim] - all node features
+            edge_index: [2, num_edges] - bipartite edges (item→time)
+            item_node_indices: [num_items] - optional, which nodes are items
+            time_node_indices: [num_times] - optional, which nodes are times
 
         Returns:
-            summary: [batch_size, graph_feat_dim]
+            summary: [1, graph_feat_dim] - concatenated summary:
+                * item_summary: mean of item node features
+                * time_summary: mean of time node features (typically zeros)
+                * edge_density: graph sparsity statistic
+                * degree_stats: item/time degree distribution features
         """
-        # Mean pooling over all nodes
-        summary = node_features.mean(dim=0, keepdim=True)  # [1, feat_dim]
-
-        # Optionally add edge statistics
-        num_edges = edge_index.shape[1]
         num_nodes = node_features.shape[0]
-        edge_density = num_edges / (num_nodes * num_nodes)
+        num_edges = edge_index.shape[1]
 
-        # Append density as additional feature
-        density_feat = torch.ones(summary.shape[0], 1, device=summary.device) * edge_density
-        summary = torch.cat([summary, density_feat], dim=1)
+        # ===================================================================
+        # Infer item/time node indices if not provided
+        # ===================================================================
+        # Heuristic: assume first N nodes are items, rest are times
+        # (matches ItemTimeGraphBuilder convention)
+        # ===================================================================
+        if item_node_indices is None or time_node_indices is None:
+            # Use edge structure to infer: sources are items, targets are times
+            # (bipartite graph should have item→time edges only)
+            src_nodes = edge_index[0].unique()
+            tgt_nodes = edge_index[1].unique()
 
-        # Project to target dimension
+            # Items are sources, times are targets
+            if item_node_indices is None:
+                item_node_indices = src_nodes
+            if time_node_indices is None:
+                time_node_indices = tgt_nodes
+
+        num_items = len(item_node_indices)
+        num_times = len(time_node_indices)
+
+        # ===================================================================
+        # Separated node-type summaries (paper-aligned)
+        # ===================================================================
+        # Item summary: captures intrinsic item attributes
+        item_features = node_features[item_node_indices]  # [num_items, feat_dim]
+        item_summary = item_features.mean(dim=0, keepdim=True)  # [1, feat_dim]
+
+        # Time summary: captures temporal patterns (typically zero vectors)
+        time_features = node_features[time_node_indices]  # [num_times, feat_dim]
+        time_summary = time_features.mean(dim=0, keepdim=True)  # [1, feat_dim]
+
+        # ===================================================================
+        # Graph structure statistics (capture timing & co-purchase dependence)
+        # ===================================================================
+        # Edge density: overall graph sparsity
+        edge_density = num_edges / (num_nodes * num_nodes) if num_nodes > 0 else 0.0
+
+        # Item degree distribution: how concentrated purchases are
+        # (high variance = some items purchased much more than others)
+        item_degrees = torch.bincount(
+            edge_index[0], minlength=num_nodes
+        )[item_node_indices].float()
+        item_degree_mean = item_degrees.mean() if num_items > 0 else torch.tensor(0.0)
+        item_degree_std = item_degrees.std() if num_items > 1 else torch.tensor(0.0)
+
+        # Time degree distribution: how temporally concentrated purchases are
+        # (high variance = purchases clustered in specific time periods)
+        time_degrees = torch.bincount(
+            edge_index[1], minlength=num_nodes
+        )[time_node_indices].float()
+        time_degree_mean = time_degrees.mean() if num_times > 0 else torch.tensor(0.0)
+        time_degree_std = time_degrees.std() if num_times > 1 else torch.tensor(0.0)
+
+        # ===================================================================
+        # Concatenate all summary components
+        # ===================================================================
+        # [item_feat_dim] + [time_feat_dim] + [1 density] + [4 degree stats]
+        # = 2 * feat_dim + 5
+        summary_components = [
+            item_summary,          # [1, feat_dim]
+            time_summary,          # [1, feat_dim]
+            torch.tensor([[edge_density]], device=node_features.device),  # [1, 1]
+            torch.tensor([[item_degree_mean]], device=node_features.device),  # [1, 1]
+            torch.tensor([[item_degree_std]], device=node_features.device),   # [1, 1]
+            torch.tensor([[time_degree_mean]], device=node_features.device),  # [1, 1]
+            torch.tensor([[time_degree_std]], device=node_features.device),   # [1, 1]
+        ]
+
+        summary = torch.cat(summary_components, dim=1)  # [1, 2*feat_dim + 5]
+
+        # Project to target dimension if needed
         if summary.shape[1] != self.graph_feat_dim:
-            # Lazy projection (add on first call if needed)
             if not hasattr(self, 'summary_proj'):
-                self.summary_proj = nn.Linear(summary.shape[1], self.graph_feat_dim).to(summary.device)
+                self.summary_proj = nn.Linear(
+                    summary.shape[1], self.graph_feat_dim
+                ).to(node_features.device)
             summary = self.summary_proj(summary)
 
         return summary
@@ -223,24 +304,22 @@ class MIEstimator(nn.Module):
         if graph_summary.shape[0] == 1:
             graph_summary = graph_summary.expand(num_items, -1)
 
-        # Joint statistics
-        with torch.no_grad():
-            joint_stats = self(item_repr, graph_summary)
-            joint_mean = joint_stats.mean()
+        # Joint statistics — no no_grad so callers can differentiate through this
+        # (needed for adversarial PGD loop that maximizes MI loss)
+        joint_stats = self(item_repr, graph_summary)
+        joint_mean = joint_stats.mean()
 
-        # Marginal statistics (average over multiple shuffles)
+        # Marginal statistics (shuffle negatives, average over multiple shuffles)
         marginal_means = []
         for _ in range(num_neg_samples):
             perm = torch.randperm(num_items, device=item_repr.device)
             marginal_repr = item_repr[perm]
-
-            with torch.no_grad():
-                marginal_stats = self(marginal_repr, graph_summary)
-                marginal_means.append(torch.exp(marginal_stats).mean())
+            marginal_stats = self(marginal_repr, graph_summary)
+            marginal_means.append(torch.exp(marginal_stats).mean())
 
         marginal_mean = torch.stack(marginal_means).mean()
 
-        # MI estimate
+        # MINE lower bound: E[T(x,y)] - log(E[exp(T(x,y'))])
         mi_estimate = joint_mean - torch.log(marginal_mean + 1e-8)
 
         return mi_estimate
@@ -396,59 +475,136 @@ class STBScorer(nn.Module):
         graph_summary: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        Compute stability score
+        Compute stability score with worst-case perturbation (paper: inf_{S'∈B_t})
+
+        NEW INTERFACE (2026-03): Supports batched perturbed representations to compute
+        worst-case score internally instead of external averaging.
 
         Args:
-            original_repr: [num_items, dim] - original representations
-            perturbed_repr: [num_items, dim] - perturbed representations
+            original_repr: [num_items, dim] - original (unperturbed) representations
+            perturbed_repr:
+                - Old (deprecated): [num_items, dim] - single perturbed repr
+                - New: [num_rounds, num_items, dim] - multiple perturbed reprs
             graph_summary: [1, feat_dim] - graph summary (required for MI mode)
 
         Returns:
-            stability_scores: [num_items] - higher = more stable
+            stability_scores: [num_items] - higher = more stable preference
+                - MI mode: worst-case (min) MI proxy over perturbation rounds
+                - Baseline mode: worst-case (min) cosine similarity over rounds
         """
+        # Handle backward compatibility: if 2D input, treat as single round
+        if perturbed_repr.dim() == 2:
+            perturbed_repr = perturbed_repr.unsqueeze(0)  # [1, num_items, dim]
+            logger.warning("compute_stability_score received 2D perturbed_repr, "
+                          "treating as single round. Pass 3D [rounds, items, dim] "
+                          "for proper worst-case computation.")
+
+        num_rounds, num_items, repr_dim = perturbed_repr.shape
+
         if self.use_mi:
             if graph_summary is None:
                 raise ValueError("graph_summary required for MI-based scoring")
 
-            # MI-based: I(S; e(S)) ≈ T(e(S), S) - log(E[exp(T(e(S'), S))])
-            # Here we use simplified proxy: T(e(S), S) as stability score
-            num_items = original_repr.shape[0]
-            graph_summary_expanded = graph_summary.expand(num_items, -1)
+            # ===================================================================
+            # MI-based STB approximation (paper Section 3.1.3)
+            # ===================================================================
+            # Theoretical bound:
+            #   STB_{n,t} = inf_{S'∈B_t} [1 - Pr[h([e(S')]_n) != Stable]]
+            #   ≤ (I(S'; e(S')) + log 2) / log |Y|
+            #
+            # Implementation: For each perturbation round, compute per-item MI proxy:
+            #   score_n^{(r)} = T(e(S'_r)_n, S) - T(e(S'_shuffle)_n, S)
+            # Then take WORST-CASE (min) over rounds to approximate infimum.
+            #
+            # Higher score → even worst perturbation preserves graph-repr dependency
+            #              → stable preference.
+            # ===================================================================
+
+            graph_summary_expanded = graph_summary.expand(num_items, -1)  # [num_items, feat_dim]
 
             with torch.no_grad():
-                scores = self.mi_estimator(original_repr, graph_summary_expanded).squeeze(-1)
+                # Compute per-round MI proxy scores
+                round_scores = []  # List of [num_items] tensors
 
-            return scores
+                for round_idx in range(num_rounds):
+                    round_repr = perturbed_repr[round_idx]  # [num_items, dim]
+
+                    # Joint: T(e(S'_r)_n, S) — paired representation with graph summary
+                    joint_stats = self.mi_estimator(
+                        round_repr, graph_summary_expanded
+                    ).squeeze(-1)  # [num_items]
+
+                    # Marginal: T(e(S'_shuffle)_n, S) — shuffle to break joint distribution
+                    perm = torch.randperm(num_items, device=round_repr.device)
+                    marginal_stats = self.mi_estimator(
+                        round_repr[perm], graph_summary_expanded
+                    ).squeeze(-1)  # [num_items]
+
+                    # Per-item MI proxy for this round
+                    round_score = joint_stats - marginal_stats  # [num_items]
+                    round_scores.append(round_score)
+
+                # Stack and take WORST-CASE (min) over rounds → approximates inf_{S'∈B_t}
+                all_scores = torch.stack(round_scores, dim=0)  # [num_rounds, num_items]
+                worst_case_scores = all_scores.min(dim=0).values  # [num_items]
+
+            return worst_case_scores
 
         else:
-            # Cosine similarity (baseline)
-            original_norm = F.normalize(original_repr, dim=1)
-            perturbed_norm = F.normalize(perturbed_repr, dim=1)
+            # ===================================================================
+            # BASELINE MODE: Cosine similarity (NOT paper-faithful)
+            # ===================================================================
+            # This is an engineering approximation for comparison/debugging.
+            # The paper does NOT define STB via embedding similarity.
+            #
+            # Still use worst-case (min) over rounds to match the infimum concept,
+            # even though the similarity metric itself is not theory-aligned.
+            # ===================================================================
 
-            stability_scores = (original_norm * perturbed_norm).sum(dim=1)
+            original_norm = F.normalize(original_repr, dim=1)  # [num_items, dim]
+            perturbed_norm = F.normalize(perturbed_repr, dim=2)  # [num_rounds, num_items, dim]
 
-            return stability_scores
+            # Cosine similarity for each round: [num_rounds, num_items]
+            similarities = (original_norm.unsqueeze(0) * perturbed_norm).sum(dim=2)
+
+            # WORST-CASE (min) over rounds
+            worst_case_similarities = similarities.min(dim=0).values  # [num_items]
+
+            return worst_case_similarities
 
     def compute_graph_summary(
         self,
         node_features: torch.Tensor,
-        edge_index: torch.Tensor
+        edge_index: torch.Tensor,
+        item_node_indices: Optional[torch.Tensor] = None,
+        time_node_indices: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Compute graph summary for MI estimation
 
+        Enhanced (2026-03): Passes item/time node indices to compute separated
+        item-side and time-side summaries, better capturing timing dependence
+        and co-purchase patterns in the bipartite graph.
+
         Args:
             node_features: [num_nodes, dim]
             edge_index: [2, num_edges]
+            item_node_indices: [num_items] - optional, for better summary computation
+            time_node_indices: [num_times] - optional, for better summary computation
 
         Returns:
-            summary: [1, graph_feat_dim]
+            summary: [1, graph_feat_dim] or None if MI estimator disabled
         """
         if self.mi_estimator is None:
             return None
 
         with torch.no_grad():
-            summary = self.mi_estimator.compute_graph_summary(node_features, edge_index)
+            summary = self.mi_estimator.compute_graph_summary(
+                node_features,
+                edge_index,
+                item_node_indices=item_node_indices,
+                time_node_indices=time_node_indices
+            )
 
         return summary
 

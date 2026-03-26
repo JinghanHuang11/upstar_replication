@@ -72,14 +72,23 @@ class AdvancedSTBEncoder(nn.Module):
         """
         Compute STB scores using configured perturbation strategy
 
+        Paper-aligned: STB = inf_{S'∈B_t} stability(S')
+                      → approximated by min (worst-case) over perturbation rounds
+
         Args:
             graph: Dict with 'node_features', 'edge_index', 'item_node_indices'
             num_perturbation_rounds: Number of perturbation rounds
             return_details: If True, return detailed statistics
 
         Returns:
-            stb_scores: [num_items] - mean stability scores
-            details: Optional dict with detailed statistics
+            stb_scores: [num_items] - WORST-CASE (min) stability scores (paper-aligned)
+            details: Optional dict with:
+                - 'per_round_scores': [rounds, items] - item-level scores for each round
+                - 'worst_case_scores': [items] - min over rounds (PRIMARY STB metric)
+                - 'mean_scores': [items] - mean over rounds (for comparison/debugging only)
+                - 'attack_info': list of per-round attack info
+                - 'original_repr': [items, dim]
+                - 'perturbed_repr': [rounds, items, dim]
         """
         device = graph['node_features'].device
         item_indices = graph['item_node_indices']
@@ -156,29 +165,57 @@ class AdvancedSTBEncoder(nn.Module):
             all_perturbed_repr.append(perturbed_repr)
             all_attack_info.append(attack_info)
 
-        # Stack perturbed representations
-        stacked_perturbed = torch.stack(all_perturbed_repr, dim=0)  # [rounds, num_items, dim]
+        # Stack perturbed representations: [rounds, num_items, dim]
+        stacked_perturbed = torch.stack(all_perturbed_repr, dim=0)
 
-        # Compute stability scores (mean cosine similarity)
-        original_norm = F.normalize(original_repr, dim=1)
-        perturbed_norm = F.normalize(stacked_perturbed, dim=2)
+        # ===================================================================
+        # Item-level score computation (per round)
+        # ===================================================================
+        # Current: cosine similarity between original and perturbed repr
+        # NOTE: This is a BASELINE metric, not the full MI-based STB from paper.
+        #       For true paper alignment, should use MI estimator like in stb_encoder.py
+        # ===================================================================
 
-        # Cosine similarity for each round
-        similarities = (original_norm.unsqueeze(0) * perturbed_norm).sum(dim=2)  # [rounds, num_items]
+        original_norm = F.normalize(original_repr, dim=1)  # [num_items, dim]
+        perturbed_norm = F.normalize(stacked_perturbed, dim=2)  # [rounds, num_items, dim]
 
-        # Mean across rounds
-        stb_scores = similarities.mean(dim=0)  # [num_items]
+        # Per-round item-level scores: [rounds, num_items]
+        per_round_scores = (original_norm.unsqueeze(0) * perturbed_norm).sum(dim=2)
+
+        # ===================================================================
+        # Aggregation over perturbation rounds
+        # ===================================================================
+        # Paper: STB = inf_{S'∈B_t} stability(S')
+        #        → approximate infimum via MIN (worst-case) over rounds
+        #
+        # Mean is provided for comparison/debugging but NOT the primary metric
+        # ===================================================================
+
+        # PRIMARY: Worst-case (min) over rounds — paper-aligned STB
+        worst_case_scores = per_round_scores.min(dim=0).values  # [num_items]
+
+        # SECONDARY: Mean over rounds — for comparison with old implementation
+        mean_scores = per_round_scores.mean(dim=0)  # [num_items]
 
         if return_details:
             details = {
-                'all_similarities': similarities,  # [rounds, num_items]
+                'per_round_scores': per_round_scores,  # [rounds, num_items]
+                'worst_case_scores': worst_case_scores,  # [num_items] — PRIMARY
+                'mean_scores': mean_scores,  # [num_items] — for comparison only
                 'attack_info': all_attack_info,
                 'original_repr': original_repr,
-                'perturbed_repr': stacked_perturbed
+                'perturbed_repr': stacked_perturbed,
+                # Metadata for interpretation
+                'aggregation_info': {
+                    'primary_metric': 'worst_case_scores (min over rounds)',
+                    'primary_reason': 'Paper: STB = inf_{S\'∈B_t} stability(S\')',
+                    'secondary_metric': 'mean_scores (for comparison with old impl)',
+                    'score_type': 'cosine_similarity (baseline, not full MI-based)'
+                }
             }
-            return stb_scores, details
+            return worst_case_scores, details
         else:
-            return stb_scores, None
+            return worst_case_scores, None
 
 
 class STBComparator:
@@ -292,8 +329,12 @@ class STBComparator:
             results[version] = version_results
 
             # Log summary
-            logger.info(f"  STB scores: mean={version_results['statistics']['mean']:.4f}, "
+            logger.info(f"  STB scores (worst-case/min): mean={version_results['statistics']['mean']:.4f}, "
                        f"std={version_results['statistics']['std']:.4f}")
+            if details and 'mean_scores' in details:
+                # Also log mean-over-rounds for comparison
+                mean_over_rounds = details['mean_scores'].mean().item()
+                logger.info(f"    (for comparison: mean-over-rounds={mean_over_rounds:.4f})")
             logger.info(f"  Distribution: Stable={num_stable}, "
                        f"Exploratory={num_expl}, Uncategorized={num_middle}")
             logger.info(f"  Time: {elapsed_time:.2f}s")

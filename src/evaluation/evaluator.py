@@ -17,7 +17,7 @@ import logging
 import json
 import csv
 
-from src.models.upstar import UPSTARMoodel
+from src.models.upstar import UPSTARModel
 from src.data.upstar_dataset import get_upstar_dataloader
 from src.evaluation.metrics import (
     compute_all_metrics,
@@ -95,7 +95,7 @@ class UPSTAREvaluator:
         checkpoint = torch.load(self.checkpoint_path, weights_only=False, map_location=self.device)
 
         # Create model
-        self.model = UPSTARMoodel(
+        self.model = UPSTARModel(
             num_items=self.num_items,
             embed_dim=self.config['model']['embed_dim'],
             hidden_dim=self.config['model']['hidden_dim'],

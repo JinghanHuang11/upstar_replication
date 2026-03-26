@@ -189,14 +189,27 @@ class ContinuousTopologyPerturbation:
     """
     Continuous relaxation + projection for graph topology perturbation
 
-    Paper correspondence: Appendix - graph structure perturbation
-    Relaxes discrete edge structure to continuous weights, applies gradient-based attack,
-    then projects back to discrete structure.
+    ===================================================================
+    ENGINEERING APPROXIMATION (NOT strict paper implementation)
+    ===================================================================
+    The paper's true topology attack requires:
+    - Discrete optimization over edge sets
+    - Exact worst-case edge perturbation in ε_a-ball
+    - Differentiable GNN for gradient-based optimization
+
+    Current implementation:
+    - Random edge flipping (gradient-free heuristic)
+    - Continuous relaxation as engineering trick
+    - Bipartite constraints enforced (item→time edges only)
+    - Budget ε_a = 0.1 approximated by fraction of edges modified
+
+    This is a BASELINE for comparison, not the paper's full theoretical attack.
+    ===================================================================
 
     Args:
-        edge_budget: Fraction of edges that can be modified
+        edge_budget: Fraction of edges that can be modified (ε_a ≈ 0.1)
         num_steps: Number of optimization steps
-        step_size: Step size for gradient ascent
+        step_size: Step size for random edge modification
         temperature: Temperature for sigmoid relaxation
     """
 
@@ -212,7 +225,7 @@ class ContinuousTopologyPerturbation:
         self.step_size = step_size
         self.temperature = temperature
 
-        logger.info(f"Initialized ContinuousTopologyPerturbation: "
+        logger.info(f"Initialized ContinuousTopologyPerturbation (ENGINEERING APPROX): "
                    f"budget={edge_budget}, steps={num_steps}, temp={temperature}")
 
     def perturb(
@@ -226,19 +239,32 @@ class ContinuousTopologyPerturbation:
         original_edge_index: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Dict]:
         """
-        Continuous relaxation + projection for edge perturbation
+        Edge perturbation with BIPARTITE CONSTRAINTS (engineering approximation)
+
+        ===================================================================
+        CRITICAL: Enforces bipartite graph structure
+        ===================================================================
+        - ONLY item→time edges allowed (no item-item, no time-time)
+        - Source nodes ∈ [0, num_items)
+        - Target nodes ∈ [num_items, num_nodes)
+        - Budget ε_a = 0.1 enforced via fraction of edges modified
+
+        This is NOT the paper's true gradient-based topology attack (which would
+        require differentiable GNN and discrete optimization). It's a random
+        flipping heuristic with bipartite constraints for comparison purposes.
+        ===================================================================
 
         Args:
-            edge_index: [2, num_edges]
-            num_nodes: total nodes
+            edge_index: [2, num_edges] - original edges (should be item→time only)
+            num_nodes: total nodes = num_items + num_times
             num_items: number of item nodes
-            encoder: GNN encoder
-            node_features: [num_nodes, dim] (required if encoder provided)
-            item_node_indices: [num_items] (required if encoder provided)
+            encoder: GNN encoder (optional, for loss-guided attack)
+            node_features: [num_nodes, dim] - node features (required if encoder provided)
+            item_node_indices: [num_items] - which nodes are items
             original_edge_index: Original edges (for computing difference)
 
         Returns:
-            perturbed_edge_index: [2, num_edges']
+            perturbed_edge_index: [2, num_edges'] - perturbed edges (still item→time only)
             attack_info: Dict with attack statistics
         """
         if encoder is None or node_features is None:
@@ -247,73 +273,117 @@ class ContinuousTopologyPerturbation:
                 removal_rate=self.edge_budget / 2,
                 addition_rate=self.edge_budget / 2
             )
+            # V1 already enforces bipartite (fixed in previous modification)
             return v1_perturb.perturb(edge_index, num_nodes, num_items), {}
 
         device = edge_index.device
+        num_times = num_nodes - num_items
 
-        # Create edge adjacency matrix (continuous relaxation)
+        # ===================================================================
+        # Validate input edges are bipartite
+        # ===================================================================
+        src_nodes, tgt_nodes = edge_index[0], edge_index[1]
+        if not ((src_nodes >= 0).all() and (src_nodes < num_items).all()):
+            logger.warning(f"Input edges have non-item sources! "
+                         f"Source range: [{src_nodes.min()}, {src_nodes.max()}], "
+                         f"expected: [0, {num_items})")
+        if not ((tgt_nodes >= num_items).all() and (tgt_nodes < num_nodes).all()):
+            logger.warning(f"Input edges have non-time targets! "
+                         f"Target range: [{tgt_nodes.min()}, {tgt_nodes.max()}], "
+                         f"expected: [{num_items}, {num_nodes})")
+
+        # ===================================================================
+        # Track original edges for bipartite space
+        # ===================================================================
         num_edges = edge_index.shape[1]
-        max_edges = num_nodes * num_nodes  # Upper bound
 
-        # Initialize continuous edge weights
-        # Start with original edges = 1, others = 0
-        edge_weights = torch.zeros(max_edges, device=device)
-        edge_indices = edge_index[0] * num_nodes + edge_index[1]
-        edge_weights[edge_indices] = 1.0
+        # Pre-compute all valid item→time pairs (for edge addition)
+        # This is the BIPARTITE EDGE SPACE
+        all_item_indices = torch.arange(num_items, device=device)
+        all_time_indices = torch.arange(num_items, num_nodes, device=device)
 
-        # Get original representations
+        # Create meshgrid for all valid item→time edges
+        # (used for efficient sampling when adding edges)
+        # valid_src[i] = item for edge i
+        # valid_tgt[i] = time for edge i
+        # We'll sample on-demand instead of storing all (too large)
+
+        # Get original representations (frozen)
         with torch.no_grad():
-            original_edge_weights = edge_weights.clone()
             original_repr = encoder(node_features, edge_index, item_node_indices)
 
-        # Optimize edge weights
+        # ===================================================================
+        # Random edge flipping (ENGINEERING APPROXIMATION)
+        # ===================================================================
+        # NOTE: This is NOT gradient-based (would require differentiable GNN)
+        # Instead, we use random flipping with loss monitoring
+        # ===================================================================
+
+        current_edge_index = edge_index.clone()
         loss_history = []
+
         for step in range(self.num_steps):
-            # Convert edge weights to edge index
-            # Use threshold to get discrete edges
-            current_edges = self._weights_to_edge_index(
-                edge_weights, num_nodes, temperature=self.temperature
-            )
+            # Compute current loss (for monitoring only, NOT used for optimization)
+            with torch.no_grad():
+                perturbed_repr = encoder(node_features, current_edge_index, item_node_indices)
+                loss = -F.cosine_similarity(original_repr, perturbed_repr, dim=1).mean()
+                loss_history.append(loss.item())
 
-            # Compute representations
-            perturbed_repr = encoder(node_features, current_edges, item_node_indices)
+            # ===================================================================
+            # Random edge flipping within BIPARTITE CONSTRAINTS
+            # ===================================================================
+            # Budget: ε_a = 0.1 → modify 10% of edges per step (approximated)
+            # ===================================================================
 
-            # Maximize representation change
-            loss = -F.cosine_similarity(original_repr, perturbed_repr, dim=1).mean()
-            loss_history.append(loss.item())
-
-            # Compute gradient w.r.t edge weights
-            # Note: This is approximate - we'd need proper differentiable GNN
-            # For now, use gradient-free random search
-
-            # Randomly flip some edges
             num_modify = int(num_edges * self.edge_budget * self.step_size)
-            if num_modify > 0:
-                # Remove edges
-                remove_idx = torch.randint(0, len(edge_indices), (num_modify // 2,))
-                edge_weights[edge_indices[remove_idx]] *= 0.9
+            if num_modify < 1:
+                num_modify = 1  # Ensure at least one modification
 
-                # Add edges (prefer item-item or item-time)
-                add_src = torch.randint(0, num_items, (num_modify // 2,))
-                add_dst = torch.randint(0, num_nodes, (num_modify // 2,))
-                add_indices = add_src * num_nodes + add_dst
-                edge_weights[add_indices] = torch.clamp(
-                    edge_weights[add_indices] + 0.1, max=1.0
-                )
+            num_remove = num_modify // 2
+            num_add = num_modify - num_remove
 
-        # Project back to discrete structure
-        final_edge_index = self._weights_to_edge_index(
-            edge_weights, num_nodes, temperature=0.5  # Lower temp for sharper threshold
-        )
+            # ---- Edge REMOVAL (remove existing item→time edges) ----
+            if num_remove > 0 and current_edge_index.shape[1] > 0:
+                remove_idx = torch.randint(0, current_edge_index.shape[1], (num_remove,))
+                keep_mask = torch.ones(current_edge_index.shape[1], dtype=torch.bool, device=device)
+                keep_mask[remove_idx] = False
+                current_edge_index = current_edge_index[:, keep_mask]
+
+            # ---- Edge ADDITION (add NEW item→time edges only) ----
+            # CRITICAL: Only add edges where src∈[0,num_items) and dst∈[num_items,num_nodes)
+            if num_add > 0:
+                # Sample source from ITEM nodes only
+                new_src = torch.randint(0, num_items, (num_add,), device=device)
+
+                # Sample target from TIME nodes only
+                new_dst = torch.randint(num_items, num_nodes, (num_add,), device=device)
+
+                # Stack into [2, num_add] format
+                new_edges = torch.stack([new_src, new_dst], dim=0)
+
+                # Concatenate with existing edges
+                current_edge_index = torch.cat([current_edge_index, new_edges], dim=1)
+
+        # ===================================================================
+        # Validate final edges are still bipartite
+        # ===================================================================
+        final_src, final_tgt = current_edge_index[0], current_edge_index[1]
+        assert (final_src >= 0).all() and (final_src < num_items).all(), \
+            f"Post-perturbation: Non-item sources detected in {self.__class__.__name__}"
+        assert (final_tgt >= num_items).all() and (final_tgt < num_nodes).all(), \
+            f"Post-perturbation: Non-time targets detected in {self.__class__.__name__}"
 
         attack_info = {
             'loss_history': loss_history,
-            'final_loss': loss_history[-1],
+            'final_loss': loss_history[-1] if loss_history else 0.0,
             'num_edges_original': edge_index.shape[1],
-            'num_edges_perturbed': final_edge_index.shape[1]
+            'num_edges_perturbed': current_edge_index.shape[1],
+            'num_edges_added': current_edge_index.shape[1] - edge_index.shape[1],
+            'bipartite_constraint': 'enforced (item→time edges only)',
+            'approximation': 'random_flipping_not_gradient'
         }
 
-        return final_edge_index, attack_info
+        return current_edge_index, attack_info
 
     def _weights_to_edge_index(
         self,
@@ -459,15 +529,32 @@ class MIbasedPerturbation:
         edge_index: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict]:
         """
-        Find perturbation that minimizes MI
+        Find perturbation that minimizes MI (MI-based adversarial attack)
+
+        CRITICAL FIX (2026-03): Removed no_grad from MI estimation to ensure
+        gradients flow from MI loss to perturbation tensor delta.
+
+        Objective: Minimize I(S; e(S)) under perturbation → make graph-repr
+        dependency fragile → lower stability score.
+
+        Args:
+            node_features: [num_nodes, dim] - original node features
+            item_node_indices: [num_items] - which nodes are items
+            encoder: GNN encoder (frozen during attack)
+            edge_index: [2, num_edges] - graph structure
 
         Returns:
-            perturbed_features: [num_nodes, dim]
-            attack_info: Dict with MI scores
+            perturbed_features: [num_nodes, dim] - perturbed features
+            attack_info: Dict with MI scores and attack statistics
         """
         device = node_features.device
 
-        # Initialize perturbation
+        # ===================================================================
+        # Initialize perturbation variable (OPTIMIZABLE)
+        # ===================================================================
+        # delta is the ONLY variable that receives gradients
+        # encoder parameters are FROZEN
+        # ===================================================================
         delta = torch.zeros_like(node_features)
         delta[item_node_indices] = (
             torch.empty_like(node_features[item_node_indices])
@@ -475,17 +562,26 @@ class MIbasedPerturbation:
         )
         delta.requires_grad_(True)
 
-        # Get original representations
+        # Get original representations (frozen, no grad needed)
         with torch.no_grad():
             original_features = node_features.clone()
             original_repr = encoder(original_features, edge_index, item_node_indices)
+
+        # Freeze encoder parameters (only optimize delta)
+        for param in encoder.parameters():
+            param.requires_grad = False
 
         mi_history = []
         for step in range(self.num_steps):
             if delta.grad is not None:
                 delta.grad.zero_()
 
-            # Forward with perturbation
+            # ===================================================================
+            # Forward pass: perturbed features → encoder → perturbed repr
+            # ===================================================================
+            # CRITICAL: NO no_grad here — delta needs gradients!
+            # Encoder is frozen but computation graph must be preserved
+            # ===================================================================
             perturbed_features = torch.clamp(
                 original_features + delta,
                 min=original_features - self.epsilon,
@@ -494,45 +590,66 @@ class MIbasedPerturbation:
 
             perturbed_repr = encoder(perturbed_features, edge_index, item_node_indices)
 
-            # Estimate MI
-            with torch.no_grad():
-                mi_scores = self.mi_estimator.estimate_mi(original_repr, perturbed_repr)
-                mi_mean = mi_scores.mean()
-                mi_history.append(mi_mean.item())
+            # ===================================================================
+            # MI estimation (DIFFERENTIABLE)
+            # ===================================================================
+            # CRITICAL FIX: Removed no_grad wrapper!
+            # MI estimate must flow gradients to perturbed_repr → delta
+            # ===================================================================
+            mi_scores = self.mi_estimator.estimate_mi(original_repr, perturbed_repr)
+            mi_mean = mi_scores.mean()
 
-            # Minimize MI (negative for gradient ascent)
+            # Log for monitoring (detach to avoid affecting computation graph)
+            mi_history.append(mi_mean.detach().item())
+
+            # ===================================================================
+            # Loss: minimize MI (negative = gradient ascent on -MI)
+            # ===================================================================
+            # loss = -I(S; e(S'))
+            # ∇_delta loss = -∇_delta I(S; e(S'))
+            # Moving in direction that DECREASES MI
+            # ===================================================================
             loss = -mi_mean
 
-            # Backward
+            # Backward: gradients flow to delta (NOT to encoder, which is frozen)
             loss.backward()
 
-            # Update perturbation
+            # ===================================================================
+            # PGD update: gradient ascent on perturbation
+            # ===================================================================
+            # Use sign of gradient (PGD-style) for robustness
+            # Update only item nodes (time nodes stay at zero)
+            # ===================================================================
             with torch.no_grad():
                 grad = delta.grad.data
                 # Only update item nodes
                 delta[item_node_indices] += self.step_size * grad[item_node_indices].sign()
 
-                # Project
+                # Project to ℓ∞ ball (budget constraint)
                 delta[item_node_indices] = torch.clamp(
                     delta[item_node_indices],
                     min=-self.epsilon,
                     max=self.epsilon
                 )
 
-        # Final perturbed features
-        perturbed_features = torch.clamp(
-            original_features + delta,
-            min=original_features - self.epsilon,
-            max=original_features + self.epsilon
-        )
+        # ===================================================================
+        # Final perturbed features (detach for output)
+        # ===================================================================
+        with torch.no_grad():
+            perturbed_features_final = torch.clamp(
+                original_features + delta,
+                min=original_features - self.epsilon,
+                max=original_features + self.epsilon
+            )
 
         attack_info = {
             'mi_history': mi_history,
             'final_mi': mi_history[-1],
-            'perturbation_norm': delta[item_node_indices].norm(p=np.inf).item()
+            'perturbation_norm': delta[item_node_indices].norm(p=np.inf).item(),
+            'perturbation_l2': delta[item_node_indices].norm(p=2).item()
         }
 
-        return perturbed_features.detach(), attack_info
+        return perturbed_features_final, attack_info
 
 
 # =============================================================================

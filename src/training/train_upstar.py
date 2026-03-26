@@ -1,17 +1,36 @@
 """
 Training script for UPSTAR with Staged Loss Training (Phase 5)
 
-Implements four-stage training:
-1. Stage 1: L_global only
-2. Stage 2: L_global + L_branch
-3. Stage 3: L_global + L_branch + L_orth
-4. Stage 4: All losses (including L_distill)
+PAPER OBJECTIVE (Section 3.1.4 + 3.3):
+    L_total = L_global
+            + λ * L_S&E&O
+            + L_orth
+            + L_distill
 
-Each stage:
-- Trains independently with early stopping
-- Saves separate checkpoint
-- Reports validation metrics
-- Can resume from previous stage
+    where:
+        L_global  = CE(y_hat_global,  target)                    [Section 3.1.4]
+        L_S&E&O  = CE(y_hat_stab,  target)
+                  + CE(y_hat_expl,  target)
+                  + CE(y_hat_other, target)                      [Section 3.1.4]
+        L_orth   = τ_s * z_other^T z_stab
+                 + τ_e * z_other^T z_expl                        [Section 3.3]
+        L_distill = dual teacher-student (conditional KL)         [Section 3.3]
+
+    Hyperparameters per paper:
+        λ   = 0.7  (weights L_S&E&O in total)
+        τ_s = 0.5, τ_e = 0.5  (orthogonality penalty)
+
+ENGINEERING DECISION — Staged Curriculum:
+    The paper specifies the JOINT loss above.  Training all four terms from
+    scratch can destabilize learning.  As a practical curriculum, we open
+    each term incrementally over four stages.  This is an IMPLEMENTATION
+    choice, NOT a modification of the paper's objective.  The final model
+    (after all 4 stages) still optimizes the exact formula above.
+
+    Stage 1: L_global  (warm-up: learn basic next-item prediction)
+    Stage 2: L_global + λ * L_S&E&O  (add branch supervision)
+    Stage 3: + L_orth  (introduce orthogonality between O and S/E)
+    Stage 4: + L_distill  (dual teacher-student interaction)
 """
 
 import argparse
@@ -105,9 +124,14 @@ def train_epoch(
     total_losses = {
         'total': 0.0,
         'global': 0.0,
+        'loss_stab': 0.0,
+        'loss_expl': 0.0,
+        'loss_other': 0.0,
         'branch': 0.0,
         'ortho': 0.0,
-        'distill': 0.0
+        'distill': 0.0,
+        'distill_s_to_e': 0.0,
+        'distill_e_to_s': 0.0
     }
     num_batches = 0
 
@@ -159,31 +183,48 @@ def train_epoch(
         # Track losses
         total_losses['total'] += loss.item()
         total_losses['global'] += loss_output['global'].item()
+        total_losses['loss_stab'] += loss_output['branch']['loss_stab'].item()
+        total_losses['loss_expl'] += loss_output['branch']['loss_expl'].item()
+        total_losses['loss_other'] += loss_output['branch']['loss_other'].item()
         total_losses['branch'] += loss_output['branch']['total_branch'].item()
         total_losses['ortho'] += loss_output['ortho'].item()
         total_losses['distill'] += loss_output['distill']['loss_distill'].item()
+        total_losses['distill_s_to_e'] += loss_output['distill']['loss_s_to_e'].item()
+        total_losses['distill_e_to_s'] += loss_output['distill']['loss_e_to_s'].item()
         num_batches += 1
 
-        # Track gate weights
-        gate_weights = output['gate_weights']  # [B, 3]
-        gate_weights_list.append(gate_weights.mean(dim=0).detach().cpu())
+        # Track gate weights (per-dim gate, mean over hidden dim for logging)
+        gate_repr = output['gate_repr']
+        avg_gate = torch.stack([
+            gate_repr['gate_stab'].mean(),
+            gate_repr['gate_expl'].mean(),
+            gate_repr['gate_other'].mean()
+        ], dim=0)  # [3]
+        gate_weights_list.append(avg_gate.detach().cpu())
 
         progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
 
         # Log detailed losses
         if (batch_idx + 1) % log_interval == 0:
-            avg_gate = gate_weights.mean(dim=0)
+            avg_gate = torch.stack([
+                gate_repr['gate_stab'].mean(),
+                gate_repr['gate_expl'].mean(),
+                gate_repr['gate_other'].mean()
+            ], dim=0)
             logger.info(f"  Batch {batch_idx+1}:")
-            logger.info(f"    Losses - Total={loss.item():.4f}, "
-                       f"Global={loss_output['global'].item():.4f}, "
-                       f"Branch={loss_output['branch']['total_branch'].item():.4f}, "
-                       f"Ortho={loss_output['ortho'].item():.4f}, "
-                       f"Distill={loss_output['distill']['loss_distill'].item():.4f}")
+            logger.info(f"    L_total={loss.item():.4f}")
+            logger.info(f"    L_global  = {loss_output['global'].item():.4f}   (CE on y_hat_global)")
+            logger.info(f"    L_S&E&O   = {loss_output['branch']['total_branch'].item():.4f}  "
+                        f"[stab={loss_output['branch']['loss_stab'].item():.4f}, "
+                        f"expl={loss_output['branch']['loss_expl'].item():.4f}, "
+                        f"other={loss_output['branch']['loss_other'].item():.4f}]")
+            logger.info(f"    L_orth    = {loss_output['ortho'].item():.6f}  "
+                        f"(τ_s*z_o^Tz_s + τ_e*z_o^Tz_e)")
+            logger.info(f"    L_distill = {loss_output['distill']['loss_distill'].item():.6f}  "
+                        f"[S→E={loss_output['distill']['s_teaches_e']:.0f}, "
+                        f"E→S={loss_output['distill']['e_teaches_s']:.0f}]")
             logger.info(f"    Gate (avg) - Stab={avg_gate[0]:.3f}, "
                        f"Expl={avg_gate[1]:.3f}, Other={avg_gate[2]:.3f}")
-            if loss_output['distill']['s_teaches_e'] > 0 or loss_output['distill']['e_teaches_s'] > 0:
-                logger.info(f"    Distill - S→E: {loss_output['distill']['s_teaches_e']:.0f}, "
-                           f"E→S: {loss_output['distill']['e_teaches_s']:.0f}")
 
     # Average losses
     avg_losses = {k: v / num_batches for k, v in total_losses.items()}
@@ -193,11 +234,16 @@ def train_epoch(
     epoch_gate_avg = all_gate_weights.mean(dim=0)
 
     logger.info(f"Epoch {epoch} average losses:")
-    logger.info(f"  Total:   {avg_losses['total']:.4f}")
-    logger.info(f"  Global:  {avg_losses['global']:.4f}")
-    logger.info(f"  Branch:  {avg_losses['branch']:.4f}")
-    logger.info(f"  Ortho:   {avg_losses['ortho']:.4f}")
-    logger.info(f"  Distill: {avg_losses['distill']:.4f}")
+    logger.info(f"  L_total            = {avg_losses['total']:.4f}")
+    logger.info(f"  L_global           = {avg_losses['global']:.4f}")
+    logger.info(f"  L_S&E&O (branch)  = {avg_losses['branch']:.4f}")
+    logger.info(f"    L_stab           = {avg_losses['loss_stab']:.4f}")
+    logger.info(f"    L_expl           = {avg_losses['loss_expl']:.4f}")
+    logger.info(f"    L_other          = {avg_losses['loss_other']:.4f}")
+    logger.info(f"  L_orth             = {avg_losses['ortho']:.6f}")
+    logger.info(f"  L_distill          = {avg_losses['distill']:.6f}")
+    logger.info(f"    L_S→E            = {avg_losses['distill_s_to_e']:.6f}")
+    logger.info(f"    L_E→S            = {avg_losses['distill_e_to_s']:.6f}")
     logger.info(f"Epoch {epoch} average gate weights: "
                f"Stab={epoch_gate_avg[0]:.3f}, "
                f"Expl={epoch_gate_avg[1]:.3f}, "
@@ -225,9 +271,14 @@ def evaluate(
     total_losses = {
         'total': 0.0,
         'global': 0.0,
+        'loss_stab': 0.0,
+        'loss_expl': 0.0,
+        'loss_other': 0.0,
         'branch': 0.0,
         'ortho': 0.0,
-        'distill': 0.0
+        'distill': 0.0,
+        'distill_s_to_e': 0.0,
+        'distill_e_to_s': 0.0
     }
     num_batches = 0
 
@@ -270,14 +321,24 @@ def evaluate(
         # Track losses
         total_losses['total'] += loss_output['total'].item()
         total_losses['global'] += loss_output['global'].item()
+        total_losses['loss_stab'] += loss_output['branch']['loss_stab'].item()
+        total_losses['loss_expl'] += loss_output['branch']['loss_expl'].item()
+        total_losses['loss_other'] += loss_output['branch']['loss_other'].item()
         total_losses['branch'] += loss_output['branch']['total_branch'].item()
         total_losses['ortho'] += loss_output['ortho'].item()
         total_losses['distill'] += loss_output['distill']['loss_distill'].item()
+        total_losses['distill_s_to_e'] += loss_output['distill']['loss_s_to_e'].item()
+        total_losses['distill_e_to_s'] += loss_output['distill']['loss_e_to_s'].item()
         num_batches += 1
 
-        # Track gate weights
-        gate_weights = output['gate_weights']
-        gate_weights_list.append(gate_weights.mean(dim=0).cpu())
+        # Track gate weights (per-dim gate, mean over hidden dim)
+        gate_repr = output['gate_repr']
+        avg_gate = torch.stack([
+            gate_repr['gate_stab'].mean(),
+            gate_repr['gate_expl'].mean(),
+            gate_repr['gate_other'].mean()
+        ], dim=0)  # [3]
+        gate_weights_list.append(avg_gate.cpu())
 
     # Concatenate
     all_predictions = torch.cat(all_predictions, dim=0)
@@ -287,8 +348,16 @@ def evaluate(
     metrics = compute_all_metrics(all_predictions, all_targets, k_values)
 
     # Average losses
-    avg_losses = {f'loss_{k}': v / num_batches for k, v in total_losses.items()}
-    metrics.update(avg_losses)
+    avg_losses = {k: v / num_batches for k, v in total_losses.items()}
+    # Prefix with loss_ for consistency
+    metrics['loss_total']     = avg_losses['total']
+    metrics['loss_global']    = avg_losses['global']
+    metrics['loss_stab']      = avg_losses['loss_stab']
+    metrics['loss_expl']      = avg_losses['loss_expl']
+    metrics['loss_other']     = avg_losses['loss_other']
+    metrics['loss_branch']    = avg_losses['branch']
+    metrics['loss_ortho']     = avg_losses['ortho']
+    metrics['loss_distill']   = avg_losses['distill']
 
     # Gate statistics
     all_gate_weights = torch.stack(gate_weights_list, dim=0)
@@ -359,13 +428,15 @@ def train_stage(
         )
 
         logger.info(f"\nValidation Results:")
-        logger.info(f"  NDCG@10:  {val_metrics['NDCG@10']:.4f}")
-        logger.info(f"  Recall@10: {val_metrics['Recall@10']:.4f}")
-        logger.info(f"  Loss - Total: {val_metrics['loss_total']:.4f}, "
-                   f"Global: {val_metrics['loss_global']:.4f}, "
-                   f"Branch: {val_metrics['loss_branch']:.4f}, "
-                   f"Ortho: {val_metrics['loss_ortho']:.4f}, "
-                   f"Distill: {val_metrics['loss_distill']:.4f}")
+        logger.info(f"  NDCG@10:    {val_metrics['NDCG@10']:.4f}")
+        logger.info(f"  Loss breakdown:")
+        logger.info(f"    L_global  = {val_metrics['loss_global']:.4f}")
+        logger.info(f"    L_S&E&O   = {val_metrics['loss_branch']:.4f}  "
+                   f"[stab={val_metrics['loss_stab']:.4f}, "
+                   f"expl={val_metrics['loss_expl']:.4f}, "
+                   f"other={val_metrics['loss_other']:.4f}]")
+        logger.info(f"    L_orth    = {val_metrics['loss_ortho']:.6f}")
+        logger.info(f"    L_distill = {val_metrics['loss_distill']:.6f}")
         logger.info(f"  Gate - Stab: {val_metrics['gate_stab']:.3f}, "
                    f"Expl: {val_metrics['gate_expl']:.3f}, "
                    f"Other: {val_metrics['gate_other']:.3f}")
@@ -419,12 +490,19 @@ def train_stage(
 
 
 def get_stage_description(stage_num: int) -> str:
-    """Get stage description"""
+    """
+    Return human-readable description of each stage.
+
+    NOTE: These are ENGINEERING STAGES, not separate paper objectives.
+    The paper's joint loss formula is:
+        L_total = L_global + λ*L_S&E&O + L_orth + L_distill
+    Each stage incrementally enables one more term above.
+    """
     descriptions = {
-        1: "Global Loss Only (L_global)",
-        2: "Global + Branch Losses (L_global + L_S&E&O)",
-        3: "Global + Branch + Orthogonality (L_global + L_S&E&O + L_orth)",
-        4: "All Losses (L_global + L_S&E&O + L_orth + L_distill)"
+        1: "Stage 1 (engineering): L_global only — warm-up next-item prediction",
+        2: "Stage 2 (engineering): L_global + λ*L_S&E&O — add branch supervision",
+        3: "Stage 3 (engineering): +L_orth — introduce O↔S/E orthogonality",
+        4: "Stage 4 (engineering): +L_distill — dual teacher-student interaction",
     }
     return descriptions.get(stage_num, f"Stage {stage_num}")
 

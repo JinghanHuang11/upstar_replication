@@ -28,7 +28,7 @@ import logging
 import json
 import shutil
 
-from src.models.upstar import UPSTARMoodel
+from src.models.upstar import UPSTARModel
 from src.data.upstar_dataset import get_upstar_dataloader
 from src.training.losses import UPSTARLoss, create_loss_from_config
 from src.evaluation.metrics import (
@@ -215,7 +215,7 @@ class CrossValidator:
         )
 
         # Create model
-        model = UPSTARMoodel(
+        model = UPSTARModel(
             num_items=self.num_items,
             embed_dim=self.config['model']['embed_dim'],
             hidden_dim=self.config['model']['hidden_dim'],

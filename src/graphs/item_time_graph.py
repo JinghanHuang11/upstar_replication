@@ -158,21 +158,28 @@ class ItemTimeGraphBuilder:
         item_node_indices = torch.arange(num_items, dtype=torch.long)
         time_node_indices = torch.arange(num_items, num_items + num_times, dtype=torch.long)
 
-        # Edge type (all item->time)
-        edge_type = torch.zeros(len(edges), dtype=torch.long)
-
         logger.info(f"Built item-time graph:")
         logger.info(f"  Item nodes: {num_items}")
         logger.info(f"  Time nodes: {num_times}")
         logger.info(f"  Total nodes: {num_items + num_times}")
         logger.info(f"  Edges: {len(edges)}")
 
+        # VALIDATION: Ensure bipartite structure (paper Section 3.1.3)
+        # Edge sources must be item nodes, targets must be time nodes
+        src_nodes, tgt_nodes = edge_index[0], edge_index[1]
+        assert (src_nodes >= 0).all() and (src_nodes < num_items).all(), \
+            "Edge sources must be item nodes [0, num_items)"
+        assert (tgt_nodes >= num_items).all() and (tgt_nodes < num_items + num_times).all(), \
+            "Edge targets must be time nodes [num_items, num_items+num_times)"
+
+        logger.info("✓ Bipartite structure validated: item→time edges only")
+
         return {
             'edge_index': edge_index,
             'node_features': node_features,
             'item_node_indices': item_node_indices,
             'time_node_indices': time_node_indices,
-            'edge_type': edge_type,
+            # Note: edge_type removed (not needed for bipartite graph in paper)
             'num_items': num_items,
             'num_times': num_times
         }
@@ -223,18 +230,19 @@ class ItemTimeGraphBuilder:
         return None
 
     def _empty_graph(self, item_embeddings: torch.Tensor, num_times: int) -> Dict:
-        """Return empty graph"""
+        """Return empty graph (bipartite, no edges)"""
         num_items = item_embeddings.shape[0]
+        device = item_embeddings.device
 
         return {
-            'edge_index': torch.empty((2, 0), dtype=torch.long),
+            'edge_index': torch.empty((2, 0), dtype=torch.long, device=device),
             'node_features': torch.cat([
                 item_embeddings,
-                torch.zeros(num_times, item_embeddings.shape[1])
+                torch.zeros(num_times, item_embeddings.shape[1], device=device)
             ], dim=0),
-            'item_node_indices': torch.arange(num_items, dtype=torch.long),
-            'time_node_indices': torch.arange(num_items, num_items + num_times, dtype=torch.long),
-            'edge_type': torch.empty((0,), dtype=torch.long),
+            'item_node_indices': torch.arange(num_items, dtype=torch.long, device=device),
+            'time_node_indices': torch.arange(num_items, num_items + num_times, dtype=torch.long, device=device),
+            # Note: edge_type removed (not needed for bipartite graph in paper)
             'num_items': num_items,
             'num_times': num_times
         }
