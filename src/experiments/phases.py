@@ -60,18 +60,27 @@ class Phase0_Preprocess(ExperimentPhase):
 
         # Create preprocessor
         preprocessor = Preprocessor(self.config)
-        metadata, sequences = preprocessor.run()
+        df = preprocessor.run()
 
         # Build sequences
         from src.data.build_sequences import SequenceBuilder
 
         builder = SequenceBuilder(self.config)
-        train_seqs, val_seqs, test_seqs = builder.build_sequences(sequences)
+        builder.run(df)
+
+        # Load counts from saved files
+        processed_dir = Path(self.config['dataset']['processed_dir'])
+        with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
+            train_seqs = pickle.load(f)
+        with open(processed_dir / 'val_sequences.pkl', 'rb') as f:
+            val_seqs = pickle.load(f)
+        with open(processed_dir / 'test_sequences.pkl', 'rb') as f:
+            test_seqs = pickle.load(f)
 
         results = {
-            'num_users': metadata['num_users'],
-            'num_items': metadata['num_items'],
-            'num_interactions': metadata['num_interactions'],
+            'num_users': preprocessor.num_users,
+            'num_items': preprocessor.num_items,
+            'num_interactions': preprocessor.num_interactions,
             'train_sequences': len(train_seqs),
             'val_sequences': len(val_seqs),
             'test_sequences': len(test_seqs)
