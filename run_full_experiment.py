@@ -201,8 +201,8 @@ def create_default_config(mode: str):
             'name': 'upstar_tafeng_quick',
             'dataset': {
                 'name': 'tafeng',
-                'raw_dir': 'data/raw',
-                'processed_dir': 'data/processed/tafeng',
+                'data_dir': 'data/raw/',
+                'processed_dir': 'data/processed/tafeng/',
                 'min_interactions': 5,
                 'time_window': 86400
             },
@@ -227,8 +227,8 @@ def create_default_config(mode: str):
             'name': 'upstar_tafeng_full',
             'dataset': {
                 'name': 'tafeng',
-                'raw_dir': 'data/raw',
-                'processed_dir': 'data/processed/tafeng',
+                'data_dir': 'data/raw/',
+                'processed_dir': 'data/processed/tafeng/',
                 'min_interactions': 5,
                 'time_window': 86400
             },

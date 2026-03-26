@@ -39,7 +39,7 @@ class Phase0_Preprocess(ExperimentPhase):
 
     def check_dependencies(self) -> bool:
         """Check if raw data exists"""
-        raw_dir = Path(self.config['dataset']['raw_dir'])
+        raw_dir = Path(self.config['dataset']['data_dir'])
         dataset_name = self.config['dataset']['name']
 
         # Check for common data file names
