@@ -69,6 +69,11 @@ class ItemTimeGraphBuilder:
         """
         Build time nodes (day-level)
 
+        **PAPER-ALIGNED REQUIREMENT**: Requires timestamps in sequence data
+        - Extracts day-level dates from Unix timestamps
+        - Each unique day becomes a time node in the bipartite graph
+        - Essential for Phase 3 STB computation (Section 7.1)
+
         Args:
             user_sequences: {user_idx: {'items': [(item, timestamp), ...], 'target': int}}
 
@@ -102,6 +107,11 @@ class ItemTimeGraphBuilder:
     ) -> Dict[str, torch.Tensor]:
         """
         Build item-time bipartite graph
+
+        **PAPER-ALIGNED REQUIREMENT**: Requires timestamps in sequence data
+        - Each (item, timestamp) pair creates an edge to a day-level time node
+        - Bipartite structure: item nodes ↔ time nodes (Section 3.1.3)
+        - Essential for Phase 3 STB computation via adversarial perturbation
 
         Args:
             user_sequences: user sequences with format {user_idx: {'items': [(item, timestamp), ...]}}

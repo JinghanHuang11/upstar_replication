@@ -53,6 +53,13 @@ class ItemGraphBuilder:
         """
         Split user sequences into sessions based on time gap
 
+        **PAPER-ALIGNED REQUIREMENT**: Requires timestamps in sequence data
+        - Uses timestamps to detect session boundaries (time gap > threshold)
+        - Essential for Phase 2 in-session/cross-session graph construction
+
+        **BACKWARD COMPATIBILITY**: Supports old format without timestamps
+        - If items don't have timestamps, treats entire user history as one session
+
         Args:
             user_sequences: {user_idx: {'items': [(item, timestamp), ...], 'target': int}}
 
@@ -71,14 +78,15 @@ class ItemGraphBuilder:
                 user_sessions[user_idx] = []
                 continue
 
+            # **FORMAT DETECTION**: Check if items have timestamps
             has_timestamps = isinstance(raw_items[0], tuple)
 
             if not has_timestamps:
-                # No timestamp info — one session per user
+                # **BACKWARD COMPATIBILITY**: No timestamp info — one session per user
                 user_sessions[user_idx] = [list(raw_items)]
                 continue
 
-            # Sort by timestamp ascending before splitting
+            # **PAPER-ALIGNED**: Sort by timestamp ascending before splitting
             sorted_items = sorted(raw_items, key=lambda x: x[1])
 
             # Split by time gap: gap > threshold => new session

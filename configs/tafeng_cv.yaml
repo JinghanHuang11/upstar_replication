@@ -19,7 +19,8 @@ dataset:
   min_item_frequency: 2
 
   # **NEW**: 10-fold cross-validation split
-  split_method: '10fold_cv'  # Options: 'leave_one_out', '10fold_cv', 'ratio'
+  split_method: 'cv10'  # Options: 'leave_one_out' (default), 'cv10', 'ratio'
+                        # cv10 = 10-fold cross-validation (paper-aligned)
   num_folds: 10
   cv_random_seed: 42  # For reproducible user shuffling
 

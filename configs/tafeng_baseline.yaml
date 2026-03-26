@@ -11,13 +11,17 @@ dataset:
   processed_dir: data/processed/tafeng/
   cache_dir: data/cache/tafeng/
   min_item_frequency: 2   # Filter items appearing less than 2 times
+  split_method: 'leave_one_out'  # Options: 'leave_one_out' (default), 'cv10', 'ratio'
+                                # leave_one_out: last->test, second_last->val, others->train
+                                # cv10: 10-fold cross-validation (paper-aligned, use configs/tafeng_cv.yaml)
 
 # Model Configuration
 model:
   # Baseline LSTM
+  # **Paper-Aligned**: Section 7.3 - hidden_size = 128, num_layers = 4
   embed_dim: 64
-  hidden_dim: 128
-  num_layers: 2
+  hidden_dim: 128            # Paper: hidden_size = 128
+  num_layers: 4              # Paper: num_layers = 4 (updated from 2)
   dropout: 0.2
   max_seq_length: 50
 
@@ -28,7 +32,7 @@ training:
   weight_decay: 0.00001
   max_epochs: 20
   early_stop_patience: 5
-  metric_for_best: 'NDCG@10'
+  metric_for_best: 'NDCG@20'  # Paper-aligned: use NDCG@20 (main table metric)
   num_workers: 4
 
 # Evaluation

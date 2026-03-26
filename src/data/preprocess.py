@@ -205,16 +205,43 @@ class Preprocessor:
 
         return df
 
-    def save_metadata(self):
-        """Save vocabulary and metadata"""
+    def save_metadata(self, df: pd.DataFrame = None):
+        """
+        Save vocabulary and metadata
+
+        **METADATA CONSUMERS**:
+        - Phase 1 (Training): num_items for model initialization
+        - Phase 2 (Item Graph): num_items, item2idx for graph construction
+        - Phase 3 (Item-Time Graph): num_items for bipartite graph
+        - Phase 4 (UPSTAR): num_items for model initialization
+        - Phase 5 (Evaluation): num_items for metric computation
+
+        **BACKWARD COMPATIBILITY**: All existing fields preserved
+        """
+        # Compute statistics if dataframe provided
+        stats = {}
+        if df is not None and len(df) > 0:
+            user_seq_lengths = df.groupby('user_idx').size()
+            stats = {
+                'avg_sequence_length': float(user_seq_lengths.mean()),
+                'min_sequence_length': int(user_seq_lengths.min()),
+                'max_sequence_length': int(user_seq_lengths.max()),
+                'std_sequence_length': float(user_seq_lengths.std())
+            }
+
         metadata = {
+            # ===== EXISTING FIELDS (backward compatible) =====
             'num_users': self.num_users,
             'num_items': self.num_items,
             'num_interactions': self.num_interactions,
             'user2idx': self.user2idx,
             'idx2user': self.idx2user,
             'item2idx': self.item2idx,
-            'idx2item': self.idx2item
+            'idx2item': self.idx2item,
+
+            # ===== NEW FIELDS (Phase 0 enhanced) =====
+            'statistics': stats,  # Dataset statistics (optional, for analysis)
+            'version': '1.1',     # Metadata format version
         }
 
         metadata_path = self.processed_dir / 'metadata.pkl'
@@ -222,6 +249,9 @@ class Preprocessor:
             pickle.dump(metadata, f)
 
         logger.info(f"Saved metadata to {metadata_path}")
+        if stats:
+            logger.info(f"  Statistics: avg_seq_len={stats['avg_sequence_length']:.2f}, "
+                       f"min={stats['min_sequence_length']}, max={stats['max_sequence_length']}")
 
     def run(self) -> pd.DataFrame:
         """Run full preprocessing pipeline"""
@@ -238,8 +268,8 @@ class Preprocessor:
         # Filter
         df = self.filter_data(df)
 
-        # Save metadata
-        self.save_metadata()
+        # Save metadata (with statistics)
+        self.save_metadata(df)
 
         logger.info("Preprocessing complete!")
         logger.info("=" * 60)

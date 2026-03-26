@@ -304,10 +304,51 @@ def run_cross_validation(
 
     # Load data
     processed_dir = Path(config['dataset']['processed_dir'])
-    with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
-        all_sequences = pickle.load(f)
 
-    logger.info(f"Loaded {len(all_sequences)} users for cross-validation")
+    # Check if CV splits already exist
+    cv_dir = processed_dir / 'cv_splits'
+    if cv_dir.exists() and (cv_dir / 'cv_metadata.pkl').exists():
+        # Load pre-computed CV splits
+        logger.info(f"Loading pre-computed CV splits from {cv_dir}")
+        with open(cv_dir / 'cv_metadata.pkl', 'rb') as f:
+            cv_metadata = pickle.load(f)
+
+        num_folds = cv_metadata['num_folds']
+        logger.info(f"Found {num_folds} pre-computed folds")
+
+        # Load all sequences from fold splits
+        train_folds = []
+        test_folds = []
+        for fold_idx in range(num_folds):
+            fold_dir = cv_dir / f'fold_{fold_idx + 1}'
+            with open(fold_dir / 'train_sequences.pkl', 'rb') as f:
+                train_folds.append(pickle.load(f))
+            with open(fold_dir / 'test_sequences.pkl', 'rb') as f:
+                test_folds.append(pickle.load(f))
+
+        # Create user lists from splits
+        all_sequences = {}
+        for fold_idx in range(num_folds):
+            all_sequences.update(train_folds[fold_idx])
+            all_sequences.update(test_folds[fold_idx])
+
+        # Reconstruct fold user lists
+        folds = []
+        for fold_idx in range(num_folds):
+            test_users = list(test_folds[fold_idx].keys())
+            folds.append(test_users)
+
+        logger.info(f"Loaded {len(all_sequences)} total users across {num_folds} folds")
+    else:
+        # Legacy mode: load from single train_sequences file and create folds
+        with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
+            all_sequences = pickle.load(f)
+
+        logger.info(f"Loaded {len(all_sequences)} users for cross-validation")
+        logger.info("Creating folds on-the-fly (consider running preprocessor with split_method='10fold_cv')")
+
+        # Create folds
+        folds = create_folds(all_sequences, num_folds=num_folds, random_seed=42)
 
     # Create folds
     folds = create_folds(all_sequences, num_folds=num_folds, random_seed=42)

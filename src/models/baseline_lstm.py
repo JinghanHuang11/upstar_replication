@@ -26,16 +26,28 @@ class LSTMRec(nn.Module):
         num_items: int,
         embed_dim: int = 64,
         hidden_dim: int = 128,
-        num_layers: int = 2,
+        num_layers: int = 4,
         dropout: float = 0.2,
         padding_idx: int = 0
     ):
         """
+        Plain LSTM baseline for next-item recommendation
+
+        **Paper-Aligned Default Hyperparameters** (Section 7.3):
+        - hidden_dim: 128 (paper: hidden_size = 128)
+        - num_layers: 4 (paper: num_layers = 4)
+
+        **Baseline Simplicity** (intentionally kept simple):
+        - Single-path LSTM (no S/E/O branches)
+        - No fusion gate
+        - No STB or motivation labels
+        - Direct item embedding → LSTM → output projection
+
         Args:
             num_items: number of items
             embed_dim: item embedding dimension
-            hidden_dim: LSTM hidden dimension
-            num_layers: number of LSTM layers
+            hidden_dim: LSTM hidden dimension (default: 128, paper-aligned)
+            num_layers: number of LSTM layers (default: 4, paper-aligned)
             dropout: dropout rate
             padding_idx: padding index (usually 0)
         """
@@ -53,7 +65,7 @@ class LSTMRec(nn.Module):
             padding_idx=padding_idx
         )
 
-        # LSTM encoder
+        # LSTM encoder (single-path, no branches)
         self.lstm = nn.LSTM(
             input_size=embed_dim,
             hidden_size=hidden_dim,
@@ -65,12 +77,14 @@ class LSTMRec(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(dropout)
 
-        # Output projection
+        # Output projection (direct to item space)
         self.output_proj = nn.Linear(hidden_dim, num_items + 1)
 
-        logger.info(f"Initialized LSTMRec model")
+        logger.info(f"Initialized LSTMRec model (Plain Baseline)")
         logger.info(f"  Items: {num_items}, Embed dim: {embed_dim}")
-        logger.info(f"  Hidden dim: {hidden_dim}, Layers: {num_layers}")
+        logger.info(f"  Hidden dim: {hidden_dim} (paper-aligned: 128)")
+        logger.info(f"  Layers: {num_layers} (paper-aligned: 4)")
+        logger.info(f"  Architecture: Single-path LSTM (no S/E/O branches)")
         logger.info(f"  Total parameters: {sum(p.numel() for p in self.parameters()):,}")
 
     def forward(

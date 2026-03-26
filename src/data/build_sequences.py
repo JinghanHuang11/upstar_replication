@@ -20,13 +20,22 @@ class SequenceBuilder:
         self.config = config
         self.processed_dir = Path(config['dataset']['processed_dir'])
 
-        # Split strategy
+        # Split strategy: 'leave_one_out' (default) or 'cv10' (10-fold CV)
         self.split_method = config['dataset'].get('split_method', 'leave_one_out')
+
+        # Normalize split_method: support both '10fold_cv' and 'cv10'
+        if self.split_method == '10fold_cv':
+            self.split_method = 'cv10'
+
         self.split_ratio = config['dataset'].get('split_ratio', [0.8, 0.1, 0.1])
 
     def build_user_sequences(self, df: pd.DataFrame) -> Dict[int, List[Tuple[int, int]]]:
         """
         Build user sequences from interaction dataframe
+
+        **PAPER-ALIGNED FORMAT**: Outputs [(item, timestamp), ...] tuples
+        - Required for Phase 2 (Item Graph): session construction via timestamps
+        - Required for Phase 3 (Item-Time Graph): day-level time node construction
 
         Args:
             df: DataFrame with columns [user_idx, item_idx, timestamp]
@@ -34,6 +43,11 @@ class SequenceBuilder:
         Returns:
             user_sequences: {user_idx: [(item_idx1, timestamp1), (item_idx2, timestamp2), ...]}
             Each entry is a (item, timestamp) tuple preserving original order.
+
+        **Format Evolution**:
+        - Old format (engineering compatibility): [item1, item2, ...]
+        - New format (paper-aligned): [(item1, ts1), (item2, ts2), ...]
+        - Both formats supported by downstream modules for backward compatibility
         """
         logger.info("Building user sequences (with timestamps)...")
 
@@ -55,17 +69,23 @@ class SequenceBuilder:
         user_sequences: Dict[int, List[Tuple[int, int]]]
     ) -> Tuple[Dict, Dict, Dict]:
         """
-        Leave-one-out split:
+        Leave-one-out split (engineering mode):
         - Train: all items except last two
         - Val: second to last item
         - Test: last item
+
+        **PAPER-ALIGNED OUTPUT FORMAT**:
+        - 'items': [(item, timestamp), ...] with timestamps preserved
+        - 'target': item_id only (no timestamp needed for prediction target)
+        - Timestamps in 'items' are required for Phase 2/3
 
         Args:
             user_sequences: {user_idx: [(item, timestamp), ...]}
 
         Returns:
             train_sequences, val_sequences, test_sequences
-            Each items field is a list of (item, timestamp) tuples.
+            Each items field is a list of (item, timestamp) tuples (paper-aligned).
+            Each target field is a single item_id (prediction target).
         """
         logger.info("Splitting with leave-one-out strategy...")
 
@@ -79,25 +99,26 @@ class SequenceBuilder:
                 continue
 
             # Extract items only (not timestamps) for target
+            # PAPER-ALIGNED: target is item_id only (prediction target doesn't need timestamp)
             all_items = [item for item, _ in seq]
-            all_items_timestamps = seq
+            all_items_timestamps = seq  # Keep (item, timestamp) tuples for 'items' field
 
             # For training: use items[:-2] as input, items[-2] as target
             train_sequences[user_idx] = {
-                'items': all_items_timestamps[:-2],
-                'target': all_items[-2]
+                'items': all_items_timestamps[:-2],  # PAPER-ALIGNED: with timestamps
+                'target': all_items[-2]               # item_id only
             }
 
             # For validation: use items[:-1] as input, items[-1] as target
             val_sequences[user_idx] = {
-                'items': all_items_timestamps[:-1],
-                'target': all_items[-1]
+                'items': all_items_timestamps[:-1],  # PAPER-ALIGNED: with timestamps
+                'target': all_items[-1]               # item_id only
             }
 
             # For testing: use items[:-1] as input, last item as target
             test_sequences[user_idx] = {
-                'items': all_items_timestamps[:-1],
-                'target': all_items[-1]
+                'items': all_items_timestamps[:-1],  # PAPER-ALIGNED: with timestamps
+                'target': all_items[-1]               # item_id only
             }
 
         logger.info(f"Train: {len(train_sequences)} users")
@@ -111,17 +132,22 @@ class SequenceBuilder:
         user_sequences: Dict[int, List[Tuple[int, int]]]
     ) -> Tuple[Dict, Dict, Dict]:
         """
-        Ratio-based split:
+        Ratio-based split (engineering fallback mode):
         - Train: first split_ratio[0] of each user's sequence
         - Val: next split_ratio[1]
         - Test: last split_ratio[2]
+
+        **PAPER-ALIGNED OUTPUT FORMAT**: Same as leave_one_out
+        - 'items': [(item, timestamp), ...] with timestamps preserved
+        - 'target': item_id only
 
         Args:
             user_sequences: {user_idx: [(item, timestamp), ...]}
 
         Returns:
             train_sequences, val_sequences, test_sequences
-            Each items field is a list of (item, timestamp) tuples.
+            Each items field is a list of (item, timestamp) tuples (paper-aligned).
+            Each target field is a single item_id (prediction target).
         """
         logger.info(f"Splitting with ratio {self.split_ratio}...")
 
@@ -172,13 +198,18 @@ class SequenceBuilder:
         random_seed: int = 42
     ) -> Tuple[List[Dict], List[Dict]]:
         """
-        10-Fold Cross-Validation split (user-level)
+        10-Fold Cross-Validation split (user-level, paper-aligned mode)
 
         Strategy:
         1. Shuffle all users randomly
         2. Split into 10 equal folds
         3. For each fold: test users = fold_i users, train users = all other folds
         4. Each user's FULL sequence is used (no train/val/test split within user)
+
+        **PAPER-ALIGNED OUTPUT FORMAT**:
+        - 'items': [(item, timestamp), ...] with timestamps preserved
+        - 'target': item_id only (last item in sequence)
+        - Same format as leave_one_out for consistency
 
         Args:
             user_sequences: {user_idx: [(item, timestamp), ...]}
@@ -303,12 +334,19 @@ class SequenceBuilder:
                     pickle.dump(test_sequences_list[fold_idx], f)
 
             # Also save metadata about CV split
+            # **CONSUMERS**: Phase 1/4 CV training scripts need num_folds and fold sizes
             cv_metadata = {
+                # ===== EXISTING FIELDS (backward compatible) =====
                 'num_folds': num_folds,
-                'split_method': '10fold_cv',
+                'split_method': 'cv10',  # Normalized from '10fold_cv'
                 'folds': [{'train_size': len(train_sequences_list[i]),
                           'test_size': len(test_sequences_list[i])}
-                         for i in range(num_folds)]
+                         for i in range(num_folds)],
+
+                # ===== NEW FIELDS (Phase 0 enhanced) =====
+                'random_seed': random_seed,  # Reproducibility
+                'total_users': sum(len(s) for s in train_sequences_list) + len(test_sequences_list[0]),
+                'version': '1.1',  # CV metadata format version
             }
             with open(cv_dir / 'cv_metadata.pkl', 'wb') as f:
                 pickle.dump(cv_metadata, f)
@@ -340,8 +378,8 @@ class SequenceBuilder:
         user_sequences = self.build_user_sequences(df)
 
         # Split based on method
-        if self.split_method == '10fold_cv':
-            # 10-fold cross-validation
+        if self.split_method == 'cv10':
+            # 10-fold cross-validation (paper-aligned mode)
             num_folds = self.config['dataset'].get('num_folds', 10)
             random_seed = self.config['dataset'].get('cv_random_seed', 42)
             train_sequences_list, test_sequences_list = self.split_10fold_cv(
@@ -355,11 +393,11 @@ class SequenceBuilder:
                 test_sequences_list=test_sequences_list
             )
         elif self.split_method == 'leave_one_out':
-            # Leave-one-out split
+            # Leave-one-out split (default/engineering mode)
             train_sequences, val_sequences, test_sequences = self.split_leave_one_out(user_sequences)
             self.save_sequences(train_sequences, val_sequences, test_sequences)
         else:
-            # Ratio-based split
+            # Ratio-based split (fallback)
             train_sequences, val_sequences, test_sequences = self.split_ratio(user_sequences)
             self.save_sequences(train_sequences, val_sequences, test_sequences)
 

@@ -117,27 +117,42 @@ rm -rf outputs/checkpoints/upstar/*
 
 #### 步骤 1：数据预处理（新格式：含 timestamp）
 
+**选择预处理模式**：
+
+| 模式 | 脚本 | 配置 | 说明 |
+|------|------|------|------|
+| Leave-One-Out | `bash scripts/run_preprocess.sh` | `configs/tafeng_baseline.yaml` | 快速验证，单次运行 |
+| **10-Fold CV** | `bash scripts/run_preprocess_cv.sh` | `configs/tafeng_cv.yaml` | **论文对齐，推荐用于最终实验** |
+
 ```bash
+# Leave-One-Out 模式（默认）
 bash scripts/run_preprocess.sh
+
+# 10-Fold CV 模式（论文推荐）
+bash scripts/run_preprocess_cv.sh
 ```
 
-**输出**：`data/processed/tafeng/*.pkl`
+**输出**：
+- Leave-One-Out: `data/processed/tafeng/{train,val,test}_sequences.pkl`
+- 10-Fold CV: `data/processed/tafeng/cv_splits/fold_{i}/{train,test}_sequences.pkl`
 
-**新格式**：`[(item, timestamp), ...]`（保留原始 timestamp）
+**新格式**：`[(item, timestamp), ...]`（保留原始 timestamp，支持 day-level item-time graph）
 
 ---
 
 #### 步骤 2：训练 Baseline
 
 ```bash
-# 单次训练
+# 单次训练（配合 leave-one-out 预处理）
 bash scripts/run_tafeng_baseline.sh single
 
-# 10 折交叉验证（与论文对齐）
+# 10 折交叉验证（配合 10-fold CV 预处理，论文对齐）
 bash scripts/run_tafeng_baseline.sh cv
 ```
 
 **输出**：`outputs/baselines/tafeng/*/results/results.json`
+
+**注意**：训练模式必须与预处理模式匹配！
 
 ---
 
@@ -234,12 +249,16 @@ upstar/
 
 | Phase | 名称 | 脚本 | 预计耗时 (CPU) | 状态 |
 |-------|------|------|---------------|------|
-| 0 | 数据预处理 | `run_preprocess.sh` | 2-5 分钟 | ⚠️ 需重新运行 |
-| 1 | Baseline 训练 | `run_tafeng_baseline.sh` | ~40 分钟 | - |
+| 0 | 数据预处理 | `run_preprocess.sh` 或 `run_preprocess_cv.sh` | 2-5 分钟 | ⚠️ 需重新运行 |
+| 1 | Baseline 训练 | `run_tafeng_baseline.sh [single\|cv]` | ~40 分钟 (single) / ~6 小时 (cv) | - |
 | 2 | Item 表示学习 | `run_item_repr.sh` | 10-20 分钟 | ⚠️ 需重新运行 |
 | 3 | STB 计算 | `run_stb.sh` | 20-40 分钟 | ⚠️ 需重新运行 |
 | 4 | UPSTAR 训练 | `run_tafeng_upstar.sh` | 6-12 小时 | - |
 | 5 | 评估对比 | `run_eval.sh` | 5-10 分钟 | - |
+
+**数据划分模式说明**：
+- **Leave-One-Out**: 单次快速验证，适合开发调试
+- **10-Fold CV**: 论文对齐的实验设置，用于最终结果报告
 
 ---
 
@@ -344,11 +363,19 @@ training:
 **Q: 为什么需要重新运行？**
 
 A: 由于完成了论文对齐改进，数据格式和模型架构都有更新：
-- 序列格式：从 `[item1, item2, ...]` 改为 `[(item, ts), ...]`
+- 序列格式：从 `[item1, item2, ...]` 改为 `[(item, ts), ...]`（支持 day-level item-time graph）
+- 数据划分：支持 leave-one-out 和 10-fold cross-validation（论文使用 CV）
 - Item-Time Graph：从简化版改为真实 day-level 时间节点
 - Item-GNN：从单一聚合改为 in/out 邻居分离
 - STB：新增可选的 MI 估计
 - 所有超参数已对齐论文 Section 7
+
+**Q: 应该选择哪种数据划分模式？**
+
+A:
+- **开发调试阶段**: 使用 leave-one-out（`run_preprocess.sh`），速度快
+- **最终实验报告**: 使用 10-fold CV（`run_preprocess_cv.sh`），符合论文设置
+- **注意**: 训练模式必须与预处理模式一致！
 
 **Q: CPU 环境训练太慢？**
 

@@ -87,11 +87,48 @@ class CrossValidator:
 
         self.num_items = metadata['num_items']
 
-        # Load train sequences (for CV, we use full dataset)
-        with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
-            all_sequences = pickle.load(f)
+        # Check if CV splits already exist
+        cv_dir = processed_dir / 'cv_splits'
+        if cv_dir.exists() and (cv_dir / 'cv_metadata.pkl').exists():
+            # Load pre-computed CV splits
+            logger.info(f"Loading pre-computed CV splits from {cv_dir}")
+            with open(cv_dir / 'cv_metadata.pkl', 'rb') as f:
+                cv_metadata = pickle.load(f)
 
-        self.all_sequences = all_sequences
+            self.num_folds = cv_metadata['num_folds']
+            logger.info(f"Found {self.num_folds} pre-computed folds")
+
+            # Load all sequences from fold splits
+            self.train_folds = []
+            self.test_folds = []
+            all_sequences = {}
+
+            for fold_idx in range(self.num_folds):
+                fold_dir = cv_dir / f'fold_{fold_idx + 1}'
+                with open(fold_dir / 'train_sequences.pkl', 'rb') as f:
+                    train_fold = pickle.load(f)
+                    self.train_folds.append(train_fold)
+                    all_sequences.update(train_fold)
+
+                with open(fold_dir / 'test_sequences.pkl', 'rb') as f:
+                    test_fold = pickle.load(f)
+                    self.test_folds.append(test_fold)
+                    all_sequences.update(test_fold)
+
+            self.all_sequences = all_sequences
+            self.use_precomputed_folds = True
+
+            logger.info(f"Loaded {len(all_sequences)} total users across {self.num_folds} folds")
+        else:
+            # Legacy mode: load from single train_sequences file
+            with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
+                all_sequences = pickle.load(f)
+
+            self.all_sequences = all_sequences
+            self.use_precomputed_folds = False
+
+            logger.info(f"Loaded {len(all_sequences)} users for cross-validation")
+            logger.info("Creating folds on-the-fly (consider running preprocessor with split_method='10fold_cv')")
 
         # Load STB results
         stb_scores_path = Path(self.config['stb']['motivation_labels_path'])
@@ -99,8 +136,6 @@ class CrossValidator:
             self.motivation_labels = np.load(stb_scores_path)
         else:
             self.motivation_labels = None
-
-        logger.info(f"Loaded {len(all_sequences)} users for cross-validation")
 
     def _create_folds(self):
         """
@@ -110,7 +145,24 @@ class CrossValidator:
         1. Get all user indices
         2. Shuffle randomly
         3. Split into 10 equal folds
+
+        Note: Skips if pre-computed folds are loaded from cv_splits/
         """
+        if self.use_precomputed_folds:
+            # Use pre-computed folds from cv_splits/
+            logger.info("Using pre-computed folds from cv_splits/")
+            # Extract fold user lists
+            self.folds = []
+            for fold_idx in range(self.num_folds):
+                test_users = list(self.test_folds[fold_idx].keys())
+                self.folds.append(test_users)
+
+            logger.info(f"Using {self.num_folds} pre-computed folds:")
+            for i, fold in enumerate(self.folds):
+                logger.info(f"  Fold {i + 1}: {len(fold)} users")
+            return
+
+        # Create folds on-the-fly (legacy mode)
         set_seed(self.random_seed)
 
         # Get all user indices
@@ -150,6 +202,17 @@ class CrossValidator:
             train_sequences: dict of training sequences
             test_sequences: dict of test sequences
         """
+        if self.use_precomputed_folds:
+            # Use pre-computed folds
+            train_sequences = self.train_folds[fold_idx]
+            test_sequences = self.test_folds[fold_idx]
+
+            logger.info(f"Fold {fold_idx + 1}: "
+                       f"Train={len(train_sequences)}, Test={len(test_sequences)} (pre-computed)")
+
+            return train_sequences, test_sequences
+
+        # Legacy mode: build from all_sequences
         # Get test users for this fold
         test_users = self.folds[fold_idx]
 

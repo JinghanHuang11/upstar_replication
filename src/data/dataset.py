@@ -65,10 +65,15 @@ class SequentialDataset(Dataset):
         items = sample['items']
         target = sample['target']
 
+        # **PAPER-ALIGNED FORMAT HANDLING**
         # Extract item indices if items are tuples (item_idx, timestamp)
         # This handles the new paper-aligned format: [(item, timestamp), ...]
+        # Required for Phase 2/3 (session construction, item-time graph)
+        # BACKWARD COMPATIBILITY: Also supports old format [item1, item2, ...]
         if len(items) > 0 and isinstance(items[0], (tuple, list)):
+            # New format: [(item, timestamp), ...] → extract items only
             items = [item[0] for item in items]
+        # Old format: [item1, item2, ...] → use as-is
 
         # Truncate sequence if too long
         if len(items) > self.max_seq_length:

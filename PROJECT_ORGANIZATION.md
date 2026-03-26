@@ -261,15 +261,33 @@ NDCG@10,9.67%
 
 **输入**：`data/raw/ta_feng.csv`
 
-**输出**：
-- `data/processed/tafeng/metadata.pkl`
-- `data/processed/tafeng/train_sequences.pkl` — **新格式**：`[(item, timestamp), ...]`
-- `data/processed/tafeng/val_sequences.pkl`
-- `data/processed/tafeng/test_sequences.pkl`
+**输出格式**：
+- 序列格式：`[(item_idx, timestamp), ...]` — **保留 timestamp 用于 day-level item-time graph**
+- Leave-One-Out 模式：
+  - `data/processed/tafeng/metadata.pkl`
+  - `data/processed/tafeng/train_sequences.pkl`
+  - `data/processed/tafeng/val_sequences.pkl`
+  - `data/processed/tafeng/test_sequences.pkl`
+- 10-Fold CV 模式：
+  - `data/processed/tafeng/metadata.pkl`
+  - `data/processed/tafeng/cv_splits/fold_{i}/train_sequences.pkl` (i=1..10)
+  - `data/processed/tafeng/cv_splits/fold_{i}/test_sequences.pkl`
+  - `data/processed/tafeng/cv_splits/cv_metadata.pkl`
 
-**脚本**：`bash scripts/run_preprocess.sh`
+**两种划分策略**：
 
-**⚠️ 重要**：由于序列格式更新，需要重新运行预处理！
+| 模式 | 配置文件 | 划分策略 | 适用场景 |
+|------|----------|----------|----------|
+| **Leave-One-Out** | `configs/tafeng_baseline.yaml` | last→test, second_last→val, others→train | 快速验证 / 单次运行 |
+| **10-Fold CV** | `configs/tafeng_cv.yaml` | 用户级 10 折交叉验证（论文对齐） | 论文实验 / 最终结果 |
+
+**脚本**：
+- Leave-One-Out: `bash scripts/run_preprocess.sh`
+- 10-Fold CV: `bash scripts/run_preprocess_cv.sh`
+
+**⚠️ 重要**：
+- 序列包含 timestamps，支持 Phase 2/3 的图构建
+- 论文使用 10-fold CV，建议用于最终实验
 
 ---
 
