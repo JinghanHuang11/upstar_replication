@@ -40,6 +40,7 @@ data/raw/*
 data/processed/*
 data/cache/*
 !data/raw/.gitkeep
+!data/raw/ta_feng.csv
 !data/processed/.gitkeep
 !data/cache/.gitkeep
 

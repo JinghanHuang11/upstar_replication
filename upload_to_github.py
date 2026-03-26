@@ -98,7 +98,8 @@ def main():
         "QUICKSTART.md", "PROJECT_STRUCTURE.md",
         "PROJECT_ORGANIZATION.md", "run_full_experiment.py",
         "upload_to_github.py", ".gitignore",
-        "data/raw/.gitkeep", "data/processed/.gitkeep", "data/cache/.gitkeep",
+        "data/raw/.gitkeep", "data/raw/ta_feng.csv",
+        "data/processed/.gitkeep", "data/cache/.gitkeep",
         "outputs/checkpoints/.gitkeep", "outputs/logs/.gitkeep",
         "outputs/predictions/.gitkeep",
     ]
