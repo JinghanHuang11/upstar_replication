@@ -167,7 +167,7 @@ class Phase2_ItemRepr(ExperimentPhase):
         metrics = train_main(args)
 
         results = {
-            'embedding_dim': self.config['model']['item_embed_dim'],
+            'embedding_dim': self.config['model'].get('item_embed_dim', self.config['model'].get('embed_dim', 128)),
             'num_items': metrics.get('num_items', 0),
             'embedding_path': str(self.checkpoint_dir / "item_embeddings.pt")
         }
