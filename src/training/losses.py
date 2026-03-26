@@ -229,8 +229,9 @@ class UPSTARLoss(nn.Module):
 
         batch_size = targets.shape[0]
 
-        # Get motivation of target items
-        target_motivations = motivation_labels[targets]  # [batch_size]
+        # motivation_labels is already [batch_size] — each sample's target motivation
+        # (computed in dataset as motivation_labels[target_item])
+        target_motivations = motivation_labels  # [batch_size]
 
         # Count stable and exploratory targets
         num_stable_targets = (target_motivations == 1).sum().item()
