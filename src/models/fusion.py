@@ -129,11 +129,7 @@ class FusionModule(nn.Module):
         # Representation fusion gate
         self.repr_gate = FusionGate(hidden_dim, use_gate)
 
-        # Logits fusion gate (optional, can use same gate or separate)
-        if vocab_size is not None:
-            # Note: logits have shape [B, vocab_size+1] (includes padding token)
-            # So we need to initialize with vocab_size + 1
-            self.logit_gate = FusionGate(vocab_size + 1, use_gate)
+        # Logit fusion reuses repr_gate weights — no separate large gate needed
 
     def fuse_representations(
         self,
@@ -157,22 +153,29 @@ class FusionModule(nn.Module):
         self,
         y_hat_stab: torch.Tensor,
         y_hat_expl: torch.Tensor,
-        y_hat_other: torch.Tensor
+        y_hat_other: torch.Tensor,
+        gate_info: Dict[str, torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
-        Fuse prediction logits
+        Fuse prediction logits using repr_gate weights (no separate large gate).
 
         Args:
             y_hat_stab, y_hat_expl, y_hat_other: [batch_size, vocab_size+1]
+            gate_info: gate weights from repr_gate (reused here)
 
         Returns:
             y_hat_global: [batch_size, vocab_size+1]
-            gate_info: dict with gate weights
+            gate_info: same gate weights dict
         """
-        if self.vocab_size is None:
-            raise ValueError("vocab_size must be set for logit fusion")
+        if gate_info is None:
+            raise ValueError("gate_info from fuse_representations must be provided")
 
-        return self.logit_gate(y_hat_stab, y_hat_expl, y_hat_other)
+        gate_stab = gate_info['gate_stab']   # [B, 1]
+        gate_expl = gate_info['gate_expl']   # [B, 1]
+        gate_other = gate_info['gate_other'] # [B, 1]
+
+        y_hat_global = gate_stab * y_hat_stab + gate_expl * y_hat_expl + gate_other * y_hat_other
+        return y_hat_global, gate_info
 
     def fuse_all(
         self,
@@ -195,7 +198,7 @@ class FusionModule(nn.Module):
             }
         """
         z_global, gate_repr = self.fuse_representations(z_stab, z_expl, z_other)
-        y_hat_global, gate_logit = self.fuse_logits(y_hat_stab, y_hat_expl, y_hat_other)
+        y_hat_global, gate_logit = self.fuse_logits(y_hat_stab, y_hat_expl, y_hat_other, gate_info=gate_repr)
 
         return {
             'z_global': z_global,
