@@ -150,7 +150,7 @@ class ItemTimeGraphBuilder:
         # Item nodes: use embeddings
         # Time nodes: zero vectors
         item_features = item_embeddings
-        time_features = torch.zeros(num_times, item_embeddings.shape[1])
+        time_features = torch.zeros(num_times, item_embeddings.shape[1], device=item_embeddings.device)
 
         node_features = torch.cat([item_features, time_features], dim=0)
 
