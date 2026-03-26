@@ -146,7 +146,7 @@ def train_epoch(
     optimizer.zero_grad()
 
     # Get embeddings
-    embeddings = model(edge_index, edge_weight, return_embeddings=True)
+    embeddings = model(edge_index, edge_weight)
 
     # Compute link scores
     pos_src_emb = embeddings[pos_edge_index[0]]
@@ -185,7 +185,7 @@ def evaluate(
         edge_weight = edge_weight.to(device)
 
     # Get embeddings
-    embeddings = model(edge_index, edge_weight, return_embeddings=True)
+    embeddings = model(edge_index, edge_weight)
 
     # Sample test edges
     num_test = config['training'].get('num_eval_edges', 1000)

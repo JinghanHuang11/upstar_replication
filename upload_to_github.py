@@ -93,7 +93,7 @@ def main():
 
     # 5. 暂存需要上传的文件（排除数据/输出/缓存）
     targets = [
-        "src/", "configs/", "scripts/", "tests/", "docs/",
+        "src/", "configs/", "scripts/", "tests/", "docs/", "pipeline_steps/",
         "requirements.txt", "pytest.ini", "README.md",
         "QUICKSTART.md", "PROJECT_STRUCTURE.md",
         "PROJECT_ORGANIZATION.md", "run_full_experiment.py",
