@@ -49,6 +49,11 @@ stb:
   exploratory_ratio: 0.4      # Paper: bottom 40% as exploratory
   # remaining 10% = uncategorized
 
+  # Legacy perturbation parameters (used by CombinedPerturbation)
+  feature_noise_std: 0.1
+  edge_removal_rate: 0.1
+  edge_addition_rate: 0.1
+
 # Backward compatibility (legacy parameters)
 # These are used if advanced perturbation is disabled
 feature_noise_std: 0.1
