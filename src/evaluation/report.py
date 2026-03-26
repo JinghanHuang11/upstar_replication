@@ -2,18 +2,28 @@
 Report Generation for UPSTAR Evaluation
 
 Generates:
-- Main results table (P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20)
-- Full table (all k values)
+- Main results table (P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20) — paper Table 2/3
+- Additional engineering metrics (@1, @10, @15, Recall@*, etc.)
 - Multiple formats: JSON, CSV, TXT, LaTeX
+
+Input metrics dict is structured as:
+    {
+        'main_metrics':      {...},   # paper Table 2/3: P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20
+        'additional_metrics': {...},   # engineering extras: @1, @10, @15, Recall@*, etc.
+        '_flat':             {...}    # backward-compat: all metrics merged
+    }
 """
 
 import json
 import csv
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Paper main metrics — must match PAPER_MAIN_METRICS in evaluator.py
+PAPER_MAIN_METRICS = ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']
 
 
 class ReportGenerator:
@@ -23,24 +33,37 @@ class ReportGenerator:
 
     def __init__(
         self,
-        metrics: Dict[str, float],
+        metrics: Union[Dict[str, float], Dict[str, Dict[str, float]]],
         cv_stats: Optional[Dict[str, Dict[str, float]]] = None
     ):
         """
         Initialize report generator
 
         Args:
-            metrics: dict of metric names and values (0-1 scale)
-            cv_stats: optional cross-validation stats with mean and std
+            metrics: either a flat dict {metric_name: value} (backward compat),
+                     or a structured dict with 'main_metrics' and 'additional_metrics'.
+                     Backward-compat: a flat dict is treated as all-main.
+            cv_stats: optional cross-validation stats with mean and std.
+                       For structured metrics, this should also be structured:
+                       {'main_metrics': {name: {mean, std}}, 'additional_metrics': {name: {mean, std}}}
         """
-        self.metrics = metrics
+        # Detect structured vs flat input
+        if 'main_metrics' in metrics or 'additional_metrics' in metrics:
+            self.main_metrics = metrics.get('main_metrics', {})
+            self.additional_metrics = metrics.get('additional_metrics', {})
+            self.metrics = {**self.main_metrics, **self.additional_metrics}  # flat merged
+        else:
+            # Backward compat: treat all as main
+            self.main_metrics = dict(metrics)
+            self.additional_metrics = {}
+            self.metrics = dict(metrics)
         self.cv_stats = cv_stats
 
     def generate_main_table(self, format: str = 'text') -> str:
         """
-        Generate main results table
+        Generate main results table (paper Table 2/3 format)
 
-        Metrics: P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20
+        Always uses: P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20
 
         Args:
             format: 'text', 'latex', or 'markdown'
@@ -48,22 +71,20 @@ class ReportGenerator:
         Returns:
             table_str: formatted table string
         """
-        main_metrics = ['Precision@5', 'Precision@20',
-                       'NDCG@5', 'NDCG@20',
-                       'MRR@5', 'MRR@20']
-
         if format == 'text':
-            return self._generate_text_table(main_metrics, "Main Results")
+            return self._generate_text_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)")
         elif format == 'latex':
-            return self._generate_latex_table(main_metrics, "Main Results")
+            return self._generate_latex_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)")
         elif format == 'markdown':
-            return self._generate_markdown_table(main_metrics, "Main Results")
+            return self._generate_markdown_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)")
         else:
             raise ValueError(f"Unknown format: {format}")
 
     def generate_full_table(self, format: str = 'text') -> str:
         """
-        Generate full results table (all k values)
+        Generate full results table (main + additional)
+
+        Shows paper main table followed by additional engineering metrics.
 
         Args:
             format: 'text', 'latex', or 'markdown'
@@ -71,18 +92,28 @@ class ReportGenerator:
         Returns:
             table_str: formatted table string
         """
-        # Get all metric names
-        if self.cv_stats:
-            metric_names = sorted(self.cv_stats.keys())
-        else:
-            metric_names = sorted(self.metrics.keys())
-
         if format == 'text':
-            return self._generate_text_table(metric_names, "Full Results")
+            lines = []
+            lines.append(self._generate_text_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)"))
+            if self.additional_metrics:
+                lines.append("\n")
+                additional_names = sorted(self.additional_metrics.keys())
+                lines.append(self._generate_text_table(additional_names, "Additional Engineering Metrics"))
+            return "\n".join(lines)
         elif format == 'latex':
-            return self._generate_latex_table(metric_names, "Full Results")
+            sections = []
+            sections.append(self._generate_latex_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)"))
+            if self.additional_metrics:
+                additional_names = sorted(self.additional_metrics.keys())
+                sections.append("\n" + self._generate_latex_table(additional_names, "Additional Engineering Metrics"))
+            return "\n".join(sections)
         elif format == 'markdown':
-            return self._generate_markdown_table(metric_names, "Full Results")
+            sections = []
+            sections.append(self._generate_markdown_table(PAPER_MAIN_METRICS, "Main Results (Paper Table)"))
+            if self.additional_metrics:
+                additional_names = sorted(self.additional_metrics.keys())
+                sections.append("\n" + self._generate_markdown_table(additional_names, "Additional Engineering Metrics"))
+            return "\n".join(sections)
         else:
             raise ValueError(f"Unknown format: {format}")
 
@@ -101,10 +132,20 @@ class ReportGenerator:
             lines.append(f"{'Metric':<15} {'Mean':<15} {'Std':<15}")
             lines.append("-" * 80)
 
+            # cv_stats is either structured {'main_metrics':{...},'additional_metrics':{...}}
+            # or flat {metric_name: {mean, std}}
+            if 'main_metrics' in self.cv_stats or 'additional_metrics' in self.cv_stats:
+                cv_data = {
+                    **self.cv_stats.get('main_metrics', {}),
+                    **self.cv_stats.get('additional_metrics', {})
+                }
+            else:
+                cv_data = self.cv_stats
+
             for metric_name in metric_names:
-                if metric_name in self.cv_stats:
-                    mean_val = self.cv_stats[metric_name]['mean'] * 100
-                    std_val = self.cv_stats[metric_name]['std'] * 100
+                if metric_name in cv_data:
+                    mean_val = cv_data[metric_name]['mean'] * 100
+                    std_val = cv_data[metric_name]['std'] * 100
                     lines.append(f"{metric_name:<15} {mean_val:6.2f}%        {std_val:6.2f}%")
         else:
             # Single run results
@@ -134,16 +175,23 @@ class ReportGenerator:
 
         if self.cv_stats:
             # Cross-validation results
+            if 'main_metrics' in self.cv_stats or 'additional_metrics' in self.cv_stats:
+                cv_data = {
+                    **self.cv_stats.get('main_metrics', {}),
+                    **self.cv_stats.get('additional_metrics', {})
+                }
+            else:
+                cv_data = self.cv_stats
+
             lines.append("\\begin{tabular}{lcc}")
             lines.append("\\hline")
             lines.append("Metric & Mean (\\%) & Std (\\%) \\\\")
             lines.append("\\hline")
 
             for metric_name in metric_names:
-                if metric_name in self.cv_stats:
-                    mean_val = self.cv_stats[metric_name]['mean'] * 100
-                    std_val = self.cv_stats[metric_name]['std'] * 100
-                    # Replace @ with \\@
+                if metric_name in cv_data:
+                    mean_val = cv_data[metric_name]['mean'] * 100
+                    std_val = cv_data[metric_name]['std'] * 100
                     latex_name = metric_name.replace('@', '\\@')
                     lines.append(f"{latex_name} & {mean_val:.2f} & {std_val:.2f} \\\\")
 
@@ -182,13 +230,21 @@ class ReportGenerator:
 
         if self.cv_stats:
             # Cross-validation results
+            if 'main_metrics' in self.cv_stats or 'additional_metrics' in self.cv_stats:
+                cv_data = {
+                    **self.cv_stats.get('main_metrics', {}),
+                    **self.cv_stats.get('additional_metrics', {})
+                }
+            else:
+                cv_data = self.cv_stats
+
             lines.append("| Metric | Mean (%) | Std (%) |")
             lines.append("|--------|----------|----------|")
 
             for metric_name in metric_names:
-                if metric_name in self.cv_stats:
-                    mean_val = self.cv_stats[metric_name]['mean'] * 100
-                    std_val = self.cv_stats[metric_name]['std'] * 100
+                if metric_name in cv_data:
+                    mean_val = cv_data[metric_name]['mean'] * 100
+                    std_val = cv_data[metric_name]['std'] * 100
                     lines.append(f"| {metric_name} | {mean_val:.2f} | {std_val:.2f} |")
         else:
             # Single run results
@@ -203,20 +259,34 @@ class ReportGenerator:
         return "\n".join(lines)
 
     def save_json(self, output_path: str):
-        """Save results as JSON"""
+        """Save results as JSON — structured with main + additional sections"""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert to percentage
         if self.cv_stats:
-            results = {}
-            for metric_name, stats in self.cv_stats.items():
-                results[metric_name] = {
-                    'mean': stats['mean'] * 100,
-                    'std': stats['std'] * 100
-                }
+            # Cross-validation: structured with main + additional
+            def convert_cv(stats_dict):
+                return {k: {'mean': v['mean'] * 100, 'std': v['std'] * 100} for k, v in stats_dict.items()}
+
+            # Try to split cv_stats into main / additional
+            if isinstance(self.cv_stats, dict) and 'main_metrics' in self.cv_stats:
+                cv_main = convert_cv(self.cv_stats.get('main_metrics', {}))
+                cv_additional = convert_cv(self.cv_stats.get('additional_metrics', {}))
+            else:
+                # Backward compat: split by metric name
+                cv_main = convert_cv({k: v for k, v in self.cv_stats.items() if k in PAPER_MAIN_METRICS})
+                cv_additional = convert_cv({k: v for k, v in self.cv_stats.items() if k not in PAPER_MAIN_METRICS})
+
+            results = {
+                'main_metrics': cv_main,
+                'additional_metrics': cv_additional
+            }
         else:
-            results = {k: v * 100 for k, v in self.metrics.items()}
+            # Single run: main + additional (already in percentage)
+            results = {
+                'main_metrics':  {k: v * 100 for k, v in self.main_metrics.items()},
+                'additional_metrics': {k: v * 100 for k, v in self.additional_metrics.items()}
+            }
 
         with open(output_path, 'w') as f:
             json.dump(results, f, indent=2)
@@ -224,27 +294,50 @@ class ReportGenerator:
         logger.info(f"Saved JSON to {output_path}")
 
     def save_csv(self, output_path: str):
-        """Save results as CSV"""
+        """Save results as CSV — main table first, then additional metrics"""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
 
+            # Main table (paper format)
+            writer.writerow(['# Paper Main Table'])
             if self.cv_stats:
-                # Cross-validation results
+                # CV main — structured or flat
+                if 'main_metrics' in self.cv_stats:
+                    cv_main = {k: v for k, v in self.cv_stats['main_metrics'].items()
+                               if k in PAPER_MAIN_METRICS}
+                    cv_add = dict(self.cv_stats.get('additional_metrics', {}))
+                else:
+                    cv_main = {k: v for k, v in self.cv_stats.items()
+                               if k in PAPER_MAIN_METRICS}
+                    cv_add = {k: v for k, v in self.cv_stats.items()
+                              if k not in PAPER_MAIN_METRICS}
                 writer.writerow(['Metric', 'Mean (%)', 'Std (%)'])
-                for metric_name, stats in self.cv_stats.items():
-                    writer.writerow([
-                        metric_name,
-                        f"{stats['mean'] * 100:.2f}",
-                        f"{stats['std'] * 100:.2f}"
-                    ])
+                for metric_name in PAPER_MAIN_METRICS:
+                    if metric_name in cv_main:
+                        s = cv_main[metric_name]
+                        writer.writerow([metric_name, f"{s['mean']*100:.2f}", f"{s['std']*100:.2f}"])
+                if cv_add:
+                    writer.writerow([])
+                    writer.writerow(['# Additional Engineering Metrics'])
+                    writer.writerow(['Metric', 'Mean (%)', 'Std (%)'])
+                    for metric_name, s in sorted(cv_add.items()):
+                        writer.writerow([metric_name, f"{s['mean']*100:.2f}", f"{s['std']*100:.2f}"])
             else:
-                # Single run results
+                # Single run main
                 writer.writerow(['Metric', 'Value (%)'])
-                for metric_name, value in self.metrics.items():
-                    writer.writerow([metric_name, f"{value * 100:.2f}"])
+                for metric_name in PAPER_MAIN_METRICS:
+                    if metric_name in self.main_metrics:
+                        writer.writerow([metric_name, f"{self.main_metrics[metric_name]*100:.2f}"])
+                # Single run additional
+                if self.additional_metrics:
+                    writer.writerow([])
+                    writer.writerow(['# Additional Engineering Metrics'])
+                    writer.writerow(['Metric', 'Value (%)'])
+                    for metric_name, value in sorted(self.additional_metrics.items()):
+                        writer.writerow([metric_name, f"{value*100:.2f}"])
 
         logger.info(f"Saved CSV to {output_path}")
 
@@ -309,36 +402,64 @@ def generate_report(
 if __name__ == '__main__':
     print("Testing Report Generator...")
 
-    # Test with single run metrics
-    metrics = {
+    # Test with structured metrics (new format)
+    structured_metrics = {
+        'main_metrics': {
+            'Precision@5': 0.0523,
+            'Precision@20': 0.1234,
+            'NDCG@5': 0.0612,
+            'NDCG@20': 0.1456,
+            'MRR@5': 0.0412,
+            'MRR@20': 0.0891
+        },
+        'additional_metrics': {
+            'NDCG@10': 0.0967,
+            'Recall@5': 0.0523,
+            'Recall@20': 0.1234,
+        }
+    }
+
+    generator = ReportGenerator(structured_metrics)
+
+    print("\n=== Text main table ===")
+    print(generator.generate_main_table(format='text'))
+
+    print("\n=== Text full table ===")
+    print(generator.generate_full_table(format='text'))
+
+    print("\n=== LaTeX main table ===")
+    print(generator.generate_main_table(format='latex'))
+
+    print("\n=== Markdown main table ===")
+    print(generator.generate_main_table(format='markdown'))
+
+    # Test backward compat: flat dict
+    print("\n=== Backward compat (flat dict) ===")
+    flat_metrics = {
         'Precision@5': 0.0523,
         'Precision@20': 0.1234,
         'NDCG@5': 0.0612,
         'NDCG@20': 0.1456,
         'MRR@5': 0.0412,
-        'MRR@20': 0.0891
+        'MRR@20': 0.0891,
+        'NDCG@10': 0.0967
     }
+    gen_flat = ReportGenerator(flat_metrics)
+    print(gen_flat.generate_main_table(format='text'))
 
-    generator = ReportGenerator(metrics)
-
-    print("\nText table:")
-    print(generator.generate_main_table(format='text'))
-
-    print("\nLaTeX table:")
-    print(generator.generate_main_table(format='latex'))
-
-    print("\nMarkdown table:")
-    print(generator.generate_main_table(format='markdown'))
-
-    # Test with CV stats
-    cv_stats = {
-        'NDCG@10': {'mean': 0.0967, 'std': 0.0023},
-        'Precision@5': {'mean': 0.0523, 'std': 0.0015}
+    # Test with CV stats (structured)
+    cv_stats_structured = {
+        'main_metrics': {
+            'NDCG@5':  {'mean': 0.0612, 'std': 0.0023},
+            'NDCG@20': {'mean': 0.1456, 'std': 0.0041},
+            'Precision@5': {'mean': 0.0523, 'std': 0.0015}
+        },
+        'additional_metrics': {
+            'NDCG@10': {'mean': 0.0967, 'std': 0.0030},
+        }
     }
-
-    generator_cv = ReportGenerator({}, cv_stats)
-
-    print("\nCV text table:")
+    generator_cv = ReportGenerator({}, cv_stats_structured)
+    print("\n=== CV text main table ===")
     print(generator_cv.generate_main_table(format='text'))
 
     print("\nReport generator module loaded successfully!")

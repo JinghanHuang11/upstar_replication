@@ -2,6 +2,9 @@
 Baseline vs UPSTAR Comparison
 
 Generates comparison reports for experimental results.
+
+Main metrics (paper Table 2/3 format):
+    P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20
 """
 
 import json
@@ -11,6 +14,9 @@ from typing import Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Paper main metrics — must match PAPER_MAIN_METRICS in evaluator.py / report.py
+PAPER_MAIN_METRICS = ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']
 
 
 class ModelComparator:
@@ -70,14 +76,7 @@ class ModelComparator:
             'relative_improvement': {}
         }
 
-        # Main table metrics
-        main_metrics = [
-            'Precision@5', 'Precision@20',
-            'NDCG@5', 'NDCG@20',
-            'MRR@5', 'MRR@20'
-        ]
-
-        for metric in main_metrics:
+        for metric in PAPER_MAIN_METRICS:
             baseline_val = baseline_metrics.get(metric, 0.0)
             upstar_val = upstar_metrics.get(metric, 0.0)
 
@@ -121,7 +120,7 @@ class ModelComparator:
         lines.append(f"{'Metric':<15} {'Baseline':<15} {'UPSTAR':<15} {'Improvement':<15} {'Rel. Imp.':<15}")
         lines.append("-" * 100)
 
-        for metric in ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']:
+        for metric in PAPER_MAIN_METRICS:
             if metric in comparison['baseline']:
                 baseline_val = comparison['baseline'][metric]
                 upstar_val = comparison['upstar'][metric]
@@ -145,7 +144,7 @@ class ModelComparator:
         lines.append("| Metric | Baseline | UPSTAR | Improvement | Rel. Imp. |")
         lines.append("|--------|----------|--------|-------------|-----------|")
 
-        for metric in ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']:
+        for metric in PAPER_MAIN_METRICS:
             if metric in comparison['baseline']:
                 baseline_val = comparison['baseline'][metric]
                 upstar_val = comparison['upstar'][metric]
@@ -170,7 +169,7 @@ class ModelComparator:
         lines.append("Metric & Baseline (\\%) & UPSTAR (\\%) & Improvement (\\%) & Rel. Imp. (\\%) \\\\")
         lines.append("\\hline")
 
-        for metric in ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']:
+        for metric in PAPER_MAIN_METRICS:
             if metric in comparison['baseline']:
                 baseline_val = comparison['baseline'][metric]
                 upstar_val = comparison['upstar'][metric]
@@ -207,7 +206,7 @@ class ModelComparator:
             writer = csv.writer(f)
             writer.writerow(['Metric', 'Baseline (%)', 'UPSTAR (%)', 'Improvement (%)', 'Rel. Imp. (%)'])
 
-            for metric in ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']:
+            for metric in PAPER_MAIN_METRICS:
                 if metric in comparison['baseline']:
                     writer.writerow([
                         metric,
@@ -252,9 +251,7 @@ class ModelComparator:
         lines.append("")
 
         # Overall improvement
-        main_metrics = ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']
-
-        improvements = [comparison['improvement'][m] for m in main_metrics if m in comparison['improvement']]
+        improvements = [comparison['improvement'][m] for m in PAPER_MAIN_METRICS if m in comparison['improvement']]
         avg_improvement = sum(improvements) / len(improvements)
 
         lines.append(f"Average Improvement (Main Metrics): {avg_improvement:.2f}%")
@@ -304,48 +301,41 @@ class ModelComparator:
         summary.append("=" * 80)
         summary.append("")
 
-        # Key results
-        summary.append("Key Metrics:")
+        # Paper main metrics
+        summary.append("Paper Main Metrics (Table 2/3):")
         summary.append("-" * 40)
 
-        key_metrics = {
-            'NDCG@10': 'Primary ranking metric',
-            'NDCG@20': 'Long-tail performance',
-            'Precision@5': 'Top-5 accuracy',
-            'Recall@20': 'Recall in top-20'
-        }
-
-        for metric, description in key_metrics.items():
-            # Try main metrics, then full metrics
+        for metric in PAPER_MAIN_METRICS:
             if metric in comparison['baseline']:
                 baseline_val = comparison['baseline'][metric]
                 upstar_val = comparison['upstar'][metric]
                 improvement = comparison['improvement'][metric]
-                summary.append(f"  {metric}: {baseline_val:.2f}% → {upstar_val:.2f}% ({improvement:+.2f}%)")
-            elif metric in self.baseline_metrics:
-                baseline_val = self.baseline_metrics[metric] * 100
-                upstar_val = self.upstar_metrics[metric] * 100
-                improvement = upstar_val - baseline_val
-                summary.append(f"  {metric}: {baseline_val:.2f}% → {upstar_val:.2f}% ({improvement:+.2f}%)")
+                summary.append(
+                    f"  {metric}: {baseline_val:.2f}% → {upstar_val:.2f}% ({improvement:+.2f}%)"
+                )
 
         summary.append("")
 
         # Overall assessment
-        improvements = [comparison['improvement'][m] for m in main_metrics if m in comparison['improvement']]
-        avg_improvement = sum(improvements) / len(improvements)
+        improvements = [
+            comparison['improvement'][m]
+            for m in PAPER_MAIN_METRICS
+            if m in comparison['improvement']
+        ]
+        avg_improvement = sum(improvements) / len(improvements) if improvements else 0.0
 
         summary.append("Overall Assessment:")
         summary.append("-" * 40)
-        summary.append(f"  Average improvement: {avg_improvement:.2f}%")
+        summary.append(f"  Average improvement (paper main): {avg_improvement:.2f}%")
 
         if avg_improvement > 5:
-            summary.append("  Assessment: ✅ SIGNIFICANT IMPROVEMENT")
+            summary.append("  Assessment: SIGNIFICANT IMPROVEMENT")
         elif avg_improvement > 2:
-            summary.append("  Assessment: ⚠️  MODERATE IMPROVEMENT")
+            summary.append("  Assessment: MODERATE IMPROVEMENT")
         elif avg_improvement > 0:
-            summary.append("  Assessment: ✅ MARGINAL IMPROVEMENT")
+            summary.append("  Assessment: MARGINAL IMPROVEMENT")
         else:
-            summary.append("  Assessment: ❌ NO IMPROVEMENT")
+            summary.append("  Assessment: NO IMPROVEMENT")
 
         summary.append("")
         summary.append("=" * 80)
@@ -424,7 +414,7 @@ if __name__ == '__main__':
             json.dump(upstar_results, f)
 
         # Test comparator
-        comparator = ModelComparator(str(baseline_dir), str(upstar_dir), str(tmpdir / "comparison"))
+        comparator = ModelComparator(str(baseline_dir), str(upstar_dir), str(Path(tmpdir) / "comparison"))
         comparator.save_comparison()
 
         print("\nComparison generated successfully!")

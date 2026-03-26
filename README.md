@@ -4,7 +4,7 @@ Reproduction of UPSTAR: Motivation-aware Sequential Recommendation
 
 **论文**: UPSTAR - Uncovering Purchase Motivations for Sequential Recommendation
 
-**项目状态**: ✅ Phase 1-6 全部完成 | 论文对齐改进完成（2026-03-25）
+**项目状态**: ✅ Phase 1-6 全部完成 | **Phase 4/5 论文对齐改进完成（2026-03-26）**
 
 ---
 
@@ -12,46 +12,68 @@ Reproduction of UPSTAR: Motivation-aware Sequential Recommendation
 
 ### 1. STB (Stable Transaction Bias)
 
-**Section 3.1**: 通过分析商品-时间图，识别购买动机
+**Section 3.1.3**: 通过商品-时间图分析 + 最坏情况扰动识别购买动机
 
 ```
-STB = min_S'∈B I(S'; e(S'))
+STB_{n,t} = inf_{S'∈B_t} [1 - Pr[h([e(S')]_n) ≠ Stable Preference]]
+         ≤ (I(S'; e(S')) + log 2) / log|Y|
 ```
 
-- **实现**: 使用 MINE（Mutual Information Neural Estimation）估计互信息
-- **时间粒度**: Day-level 时间节点（ρ=50）
-- **扰动**: PGD 优化找最坏情况扰动
+- **核心思想**: 高 STB → 稳定偏好；低 STB → 探索意图
+- **实现**:
+  - MINE 估计 `I(S; e(S))`（完整 MI 下界，非简化 proxy）
+  - Worst-case aggregation（`min` over perturbation rounds，非 `mean`）
+  - PGD 扰动（α=0.4, ε_x=0.1, ε_a=0.1, β=40）
+- **图结构**: Attributed item-time bipartite graph（强制验证，无非法边）
 
 ### 2. 三分支建模
 
 **Section 3.1.4**: 根据动机分解序列
 
-- **S-model**: Stable preference 子序列
-- **E-model**: Exploratory intent 子序列
-- **O-model**: Entire sequence（包括 uncategorized）
+- **S-model**: Stable preference 子序列（4-layer LSTM, hidden=128）
+- **E-model**: Exploratory intent 子序列（4-layer LSTM, hidden=128）
+- **O-model**: Entire sequence（包括 uncategorized）（4-layer LSTM, hidden=128）
+- **三条路径各自独立**：各有独立的 Embedding / LSTM / Linear 层，无共享 backbone
 
-### 3. Global Fusion
+### 3. Global Fusion — 逐维 Per-Dimension Gate
 
-**Section 3.1.4**: 可学习融合门
-
-```
-z_global = gate_stab · z_stab + gate_expl · z_expl + gate_other · z_other
-```
-
-### 4. Dual Teacher-Student
-
-**Section 3.3**: 动态知识蒸馏
-
-- Stable 样本：S teaches E
-- Exploratory 样本：E teaches S
-
-### 5. 正交约束
-
-**Section 3.3**: 确保 O-model 学习独特特征
+**Section 3.1.4**: 可学习逐维融合门
 
 ```
-L_orth = τ_s · z_other^T · z_stab + τ_e · z_other^T · z_expl
+gate_logits_per_dim ∈ ℝ^{d×3}   # [batch, hidden, 3]
+f_s = softmax(gate_logits_per_dim, dim=2)  # 每维三个权重归一
+z_global = f_s[1] ⊙ z_stab + f_s[2] ⊙ z_expl + f_s[3] ⊙ z_other
+y_hat_global = Linear(z_global)   # 不是加权 logit 平均！
 ```
+
+### 4. 联合损失公式
+
+**Section 3.3**:
+
+```
+L_total = L_global
+        + λ · L_S&E&O
+        + L_orth
+        + L_distill
+
+其中：
+  L_global   = CE(y_hat_global, target)
+  L_S&E&O   = CE(y_hat_stab) + CE(y_hat_expl) + CE(y_hat_other)
+  L_orth    = τ_s · z_other^T z_stab + τ_e · z_other^T z_expl   （无 normalize，无 squared）
+  L_distill = dual teacher-student KL（按 target motivation label 条件触发）
+```
+
+### 5. Dual Teacher-Student — 条件触发
+
+**Section 3.3**: 动态知识蒸馏（按 next-item 动机标签）
+
+| target item 动机 | teacher | student | uncategorized (label=2) |
+|---|---|---|---|
+| stable (label=1) | S-model | E-model | **不触发蒸馏** |
+| exploratory (label=0) | E-model | S-model | **不触发蒸馏** |
+
+- teacher `.detach()`，student 保留梯度
+- `distill_lambda=0.7`，`temperature=3.0`
 
 ---
 
@@ -59,59 +81,114 @@ L_orth = τ_s · z_other^T · z_stab + τ_e · z_other^T · z_expl
 
 ```
 upstar/
-├── configs/           # 配置文件（已与论文 Section 7 对��）
+├── configs/           # 配置文件（已与论文 Section 7 对齐）
 ├── data/              # 数据存储（raw, processed, cache）
 ├── src/               # 源代码（40 个 Python 文件）
-│   ├── data/          # 数据处理（✓ 已更新：含 timestamp）
-│   ├── graphs/        # 图构建（✓ 已更新：day-level 时间节点）
-│   ├── models/        # 模型定义（✓ 已更新：in/out 聚合, MI 估计）
-│   ├── training/      # 训练脚本（✓ 已确认：Dual Teacher-Student）
-│   ├── evaluation/    # 评估（HR@K, NDCG@K, MRR@K）
-│   ├── experiments/   # 实验管理
+│   ├── data/          # 数据处理
+│   ├── graphs/        # 图构建
+│   ├── models/        # 模型定义（Phase 4：逐维 fusion gate + 独立三分支）
+│   ├── training/      # 训练脚本（Phase 4：完整联合损失 + 条件双师生）
+│   ├── evaluation/    # 评估（Phase 5：主指标 P@5/20, NDCG@5/20, MRR@5/20）
+│   ├── experiments/    # 实验管理
 │   └── utils/         # 工具
 ├── scripts/           # 运行脚本
 ├── outputs/           # 输出（checkpoints, logs, predictions）
 ├── docs/              # 详细文档（含论文精读笔记）
-├── QUICKSTART.md      # 快速开始
-├── PROJECT_STRUCTURE.md  # 文件结构
-├── PROJECT_ORGANIZATION.md  # 项目组织详解
+├── QUICKSTART.md
+├── PROJECT_STRUCTURE.md
+├── PROJECT_ORGANIZATION.md
 └── requirements.txt
 ```
 
 ---
 
-## 核心改进（论文对齐）
+## Phase 4/5 论文对齐改进（2026-03-26）⭐
 
-### 5 个关键模块已对齐
+### Phase 4 — 模型与训练
 
-| 模块 | 对齐内容 | 论文章节 |
-|------|----------|----------|
-| **Item-Time Graph** | 真实 day-level 时间节点 | Section 7.1 |
-| **Item-GNN** | 区分 in/out 邻居的 Message Passing | Section 3.2 |
-| **STB** | 互信息近似（MINE） | Section 3.1.3 |
-| **序列模型** | 三路预测 + Dual Teacher-Student | Section 3.1.4, 3.3 |
-| **超参数** | 配置对齐 Section 7 | Section 7 |
+| # | 模块 | 改进内容 | 论文章节 | 状态 |
+|---|------|----------|----------|------|
+| 1 | **FusionGate** | 标量 `[B,3]` → **逐维 `[B,128,3]`** gate；softmax 从 dim=1 → dim=2 | Section 3.1.4 | ✅ |
+| 2 | **y_hat_global** | 移除加权 logit 平均；改为 **`Linear(z_global)`** | Section 3.1.4 | ✅ |
+| 3 | **L_orth** | 去掉 `F.normalize`（cosine similarity）；改为论文原文 **raw dot product** `τ_s·z_oᵀz_s + τ_e·z_oᵀz_e`（无 squared） | Section 3.3 | ✅ |
+| 4 | **L_distill** | 完整实现**条件双师生**：按 target motivation label 触发；teacher `.detach()`；student 保留梯度 | Section 3.3 | ✅ |
+| 5 | **联合损失** | 统一 `total_loss = λg·Lg + λb·Lb + λo·Lo + λd·Ld` | Section 3.3 | ✅ |
+| 6 | **超参数** | lr=3e-4, batch=64, hidden=128, layers=4, λ=0.7, τ_s=τ_e=0.5, optimizer=Adam | Section 7.3/7.4 | ✅ |
 
-### 关键参数（已对齐论文 Section 7）
+### Phase 5 — 评估
+
+| # | 模块 | 改进内容 | 状态 |
+|---|------|----------|------|
+| 7 | **主指标** | 统一为 `P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20`（论文 Table 2/3 口径） | ✅ |
+| 8 | **输出结构** | JSON/CSV 分段：`main_metrics` + `additional_metrics`；主表与附加分离 | ✅ |
+| 9 | **命名规范** | 移除 `HR@K` 命名；单正样本用 `Precision@K`（论文口径） | ✅ |
+| 10 | **配置驱动** | `k_values` 从 config 而非硬编码读取 | ✅ |
+
+### 之前已对齐的 12 个模块
+
+| # | 模块 | 对应文件 |
+|---|------|----------|
+| 11 | Item-Time Graph (day-level) | `src/graphs/item_time_graph.py` |
+| 12 | Item-GNN (in/out 邻居) | `src/models/item_gnn.py` |
+| 13 | STB MINE 估计 | `src/models/stb_encoder.py` |
+| 14 | STB worst-case (min) aggregation | `src/models/stb_encoder.py` |
+| 15 | MI 梯度真正可微分 | `src/graphs/perturbation_advanced.py` |
+| 16 | Bipartite 约束 | `src/graphs/item_time_graph.py` |
+| 17 | 分离 Graph Summary | `src/models/stb_encoder.py` |
+| 18 | 拓扑扰动 bipartite edges | `src/graphs/perturbation_advanced.py` |
+| 19 | Config 驱动分类阈值 | `configs/stb.yaml` |
+| 20 | 三分支独立 LSTM | `src/models/sequence_models.py` |
+| 21 | uncategorized 保留在 O-model | `src/data/upstar_dataset.py` |
+| 22 | STB 标签条件蒸馏不误触发 | `src/training/losses.py` |
+
+---
+
+## 关键参数（已对齐论文 Section 7）
 
 | 参数类别 | 参数 | 论文值 | 配置值 |
 |----------|------|--------|--------|
-| **STB** | hidden_dim | 512 | 512 ✅ |
+| **STB (Section 3.1.3)** | hidden_dim | 512 | 512 ✅ |
 | | num_layers | 1 | 1 ✅ |
 | | lr | 1e-3 | 0.001 ✅ |
-| | ρ | 50 | 50 ✅ |
-| | β | 40 | 40 ✅ |
-| | α | 0.4 | 0.4 ✅ |
-| | ε, ε_x, ε_a | 0.1 | 0.1 ✅ |
-| **Item-GNN** | embed_dim | 128 | 128 ✅ |
+| | ρ (time nodes) | 50 | 50 ✅ |
+| | β (perturbation rounds) | 40 | 40 ✅ |
+| | α (PGD step size) | 0.4 | 0.4 ✅ |
+| | ε, ε_x (feature budget) | 0.1 | 0.1 ✅ |
+| | ε_a (topology budget) | 0.1 | 0.1 ✅ |
+| **Item-GNN (Section 3.2)** | embed_dim | 128 | 128 ✅ |
 | | num_layers | 1 | 1 ✅ |
-| **序列模型** | hidden_dim | 128 | 128 ✅ |
+| **序列模型 (Section 7.3)** | hidden_dim | 128 | 128 ✅ |
 | | num_layers | 4 | 4 ✅ |
-| **联合训练** | lr | 3e-4 | 0.0003 ✅ |
+| **联合训练 (Section 7.4)** | lr | 3e-4 | 0.0003 ✅ |
 | | batch_size | 64 | 64 ✅ |
+| | λ (branch loss) | 0.7 | 0.7 ✅ |
 | | λ (distill) | 0.7 | 0.7 ✅ |
 | | τ_s | 0.5 | 0.5 ✅ |
 | | τ_e | 0.5 | 0.5 ✅ |
+| | temperature | - | 3.0 ✅ |
+| | optimizer | Adam | Adam ✅ |
+
+---
+
+## 评估指标说明
+
+**Phase 5 以论文 Table 2/3 口径为主输出**：
+
+| 论文主表 | 说明 |
+|----------|------|
+| `Precision@5` | top-5 精确率（单正样本场景下与 HR@K 数值等价，但语义不同） |
+| `Precision@20` | top-20 精确率 |
+| `NDCG@5` | top-5 归一化折损累计增益 |
+| `NDCG@20` | top-20 归一化折损累计增益 |
+| `MRR@5` | top-5 平均倒数排名 |
+| `MRR@20` | top-20 平均倒数排名 |
+
+工程附加指标（`additional_metrics`）：`NDCG@1/10/15`、`MRR@1/10/15`、`Recall@K` 等，供调参参考。
+
+**为什么用 `Precision@K` 而不是 `HR@K`**：
+- 单正样本 next-item prediction 中两者数值碰巧相等
+- 但语义不同：`Precision@K` 衡量"top-k 预测的精确程度"，`HR@K` 衡量"有多少用户命中"
+- 论文主表用 `Precision@K` 是学术规范，评估目标为排序质量
 
 ---
 
@@ -121,21 +198,32 @@ upstar/
 
 1. **Preprocess** - 加载原始数据，构建用户序列（**保留 timestamp**）
 2. **Item Graph** - 构建会话内 + 跨会话商品共现图
-3. **Item-Time Graph** - 构建 day-level item-time 图
-4. **STB Calculation** - 计算 STB 分数（**使用 MI 估计**）
+3. **Item-Time Graph** - 构建 day-level item-time 二部图
 
-### Phase 2: Model Training
+### Phase 2: Item Representation
 
-1. **Item Representation** - 训练 Item-GNN（**in/out 聚合**）
-2. **Sequence Models** - 训练 S/E/O 三分支 LSTM（4-layer, hidden=128）
-3. **Fusion** - Global fusion 门
-4. **Joint Training** - 4 阶段训练（global + branch + ortho + distill）
+1. **Item-GNN** - 训练 in/out 邻居分离聚合（1-layer, embed=128）
 
-### Phase 3: Evaluation
+### Phase 3: STB Calculation
 
-1. **Metrics** - HR@K, NDCG@K, MRR
+1. **GNN Encoder** - 1-layer, hidden=512
+2. **Worst-case Perturbation** - β=40 rounds, PGD
+3. **MI Estimation** - 完整 MINE 下界（joint - marginal）
+4. **Worst-case Aggregation** - `min` over rounds
+5. **Classification** - top 50% stable, bottom 40% exploratory, middle 10% uncategorized
+
+### Phase 4: UPSTAR Training
+
+1. **Sequence Split** - 按 STB 标签将序列拆为 stable / exploratory / entire 三路
+2. **S/E/O LSTM** - 各自独立 4-layer LSTM (hidden=128)
+3. **FusionGate** - 逐维 softmax gate（`[B,128,3]`）
+4. **Joint Loss** - 4 阶段课程：`L_global → +L_S&E&O → +L_orth → +L_distill`
+
+### Phase 5: Evaluation
+
+1. **Metrics** - P@5/20, NDCG@5/20, MRR@5/20（论文主表）
 2. **10-Fold CV** - 与论文对齐的实验协议
-3. **Ablation** - 消融研究
+3. **Comparison** - Baseline vs UPSTAR
 
 ---
 
@@ -144,17 +232,10 @@ upstar/
 ### 1. 安装依赖
 
 ```bash
-# 创建 Conda 环境
 conda create -n upstar python=3.10 -y
 conda activate upstar
-
-# 安装 PyTorch (CPU)
 pip install torch torchvision torchaudio
-
-# 安装 PyTorch Geometric (CPU)
 pip install torch-geometric pyg-lib torch-scatter torch-sparse torch-cluster torch-spline-conv -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
-
-# 安装其余依赖
 pip install -r requirements.txt
 ```
 
@@ -162,121 +243,36 @@ pip install -r requirements.txt
 
 ```bash
 python -c "
-import torch, yaml, numpy as np
-from src.data.preprocess import Preprocessor
-from src.data.build_sequences import SequenceBuilder
-from src.graphs.item_graph import ItemGraphBuilder
-from src.models.item_gnn import ItemGNN
-from src.training.losses import UPSTARLoss
+from src.training.losses import UPSTARLoss, create_loss_from_config
 from src.evaluation.metrics import compute_all_metrics
-print('PyTorch version:', torch.__version__)
-print('All core modules imported successfully!')
+from src.models.fusion import FusionGate
+from src.models.upstar import UPSTARModel
+print('All Phase 4/5 modules imported successfully!')
 "
 ```
 
 ### 3. 完整实验
 
 ```bash
-# 一键运行（推荐）
+# 一键运行
 python run_full_experiment.py --force-rerun --mode full
-```
 
-### 4. 分步运行
-
-```bash
-# ⚠️ 需要重新运行以下步骤（由于论文对齐改进）：
-
-# 清除旧数据
-rm -rf data/processed/tafeng/*
-rm -rf data/cache/tafeng/*
-rm -rf outputs/checkpoints/item_repr/*
-rm -rf outputs/checkpoints/stb/*
-
-# 预处理（新格式：含 timestamp）
+# 分步运行
 bash scripts/run_preprocess.sh
-
-# Item 表示学习（新架构：in/out 聚合）
 bash scripts/run_item_repr.sh
-
-# STB 计算（新时间节点：day-level）
 bash scripts/run_stb.sh
-
-# UPSTAR 训练
 bash scripts/run_tafeng_upstar.sh
-
-# 评估
 bash scripts/run_eval.sh
 ```
 
 ---
 
-## 性能指标
-
-### 预期性能（论文参考）
+## 预期性能（论文参考）
 
 | 模型 | P@5 | P@20 | NDCG@5 | NDCG@20 | MRR@5 | MRR@20 |
 |------|-----|------|--------|---------|-------|--------|
 | LSTM Baseline | 8.23 | 16.48 | 5.75 | 8.13 | 4.92 | 5.77 |
 | UPSTAR (Full) | 16.24 | 25.98 | 12.31 | 15.20 | 11.00 | 12.07 |
-
----
-
-## 数据集
-
-### Tafeng Dataset
-
-- **26,333** 用户
-- **15,652** 商品
-- **785,258** 交互
-- **29,142** sessions（按用户级长序列构造）
-
-**论文处理方式**：将同一用户的所有购买拼接成一个 session，删除长度 < 3 的 session
-
----
-
-## 论文实现要点
-
-### 1. Motivation Identification (Section 3.1)
-
-**核心思想**：STB 衡量商品对 timing 和 copurchase 上下文的鲁棒性
-
-```
-高 STB → Stable Preference（习惯性购买）
-低 STB → Exploratory Intent（探索性购买）
-```
-
-### 2. Item Representation (Section 3.2)
-
-**核心思想**：同时利用 in-session 和 cross-session 的商品关系
-
-```
-h_n^{g(k)} = ReLU(W_in · Σ_in + W_out · Σ_out)
-```
-
-### 3. Next Item Prediction (Section 3.1.4)
-
-**核心思想**：三条路径 + 全局融合
-
-- S-model: 稳定偏好子序列
-- E-model: 探索意图子序列
-- O-model: 完整序列
-
-### 4. Dual Teacher-Student (Section 3.3)
-
-**核心思想**：动态知识蒸馏
-
-- Stable 样本：S teaches E（`L_{S→E} = D_KL(ŷ_S || ŷ_E)`）
-- Exploratory 样本：E teaches S（`L_{E→S} = D_KL(ŷ_E || ŷ_S)`）
-
----
-
-## 开发原则
-
-- **Modular**: 每个模块独立可测
-- **Cachable**: STB 分数可离线计算和缓存
-- **Reproducible**: 固定随机种子
-- **Configurable**: 所有参数通过 YAML 配置
-- **Paper-Aligned**: 核心算法与论文一致
 
 ---
 
@@ -298,7 +294,7 @@ h_n^{g(k)} = ReLU(W_in · Σ_in + W_out · Σ_out)
 | 图神经网络 | torch-geometric |
 | 互信息估计 | MINE (自实现) |
 | 数据处理 | pandas, numpy |
-| 评估 | HR@K, NDCG@K, MRR@K |
+| 评估 | **Precision@K, NDCG@K, MRR@K**（论文口径） |
 | 日志 | TensorBoard |
 | 配置 | PyYAML |
 
@@ -308,23 +304,28 @@ h_n^{g(k)} = ReLU(W_in · Σ_in + W_out · Σ_out)
 
 **Q: 为什么需要重新训练？**
 
-A: 由于完成了 5 个模块的论文对齐改进，数据格式和模型架构都有更新：
-- 序列现在包含 timestamp（`[(item, ts), ...]`）
-- Item-Time Graph 使用真实 day-level 时间节点
-- Item-GNN 区分 in/out 邻居
-- STB 可选使用 MI 估计
-- 需要清除旧缓存并重新生成
+A: Phase 4/5 完成了以下关键对齐改进：
+- FusionGate 从标量 `[B,3]` 改为逐维 `[B,128,3]` gate
+- `L_orth` 去掉 cosine similarity，改为论文 raw dot product
+- L_distill 完整实现条件双师生蒸馏
+- 评估主指标统一为论文 Table 2/3 口径
 
-**Q: CPU 环境训练太慢？**
+**Q: 四阶段课程是论文规定的吗？**
 
-A: 使用 `--mode quick` 快速测试：减少 epochs 和数据集规模
+A: 不是。四阶段课程是**工程实现**，目的是逐步开启损失项以稳定训练。论文直接用联合损失（Section 3.3）。文件内已明确标注"engineering curriculum, not paper modification"。
 
-**Q: 如何验证论文对齐？**
+**Q: 如何验证 Phase 4/5 对齐？**
 
-A: 查看 `docs/reference/upstar_rec.md` 和各模块代码中的论文引用注释
+A: 各模块均有自检脚本：
+```bash
+python -m src.training.losses     # Stage 1-4 损失测试
+python -m src.models.upstar        # 逐维 gate 测试
+python -m src.evaluation.evaluator  # 主/附加指标分离测试
+python -m src.evaluation.comparison # comparison table 更新测试
+```
 
 ---
 
-**最后更新**: 2026-03-25
+**最后更新**: 2026-03-26
 
 **论文**: UPSTAR - Uncovering Purchase Motivations for Sequential Recommendation

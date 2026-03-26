@@ -3,6 +3,12 @@ Unified Evaluator for UPSTAR
 
 Decouples evaluation from training loop.
 Supports single evaluation and cross-validation.
+
+Main metrics (paper Table 2/3 format):
+    P@5, P@20, NDCG@5, NDCG@20, MRR@5, MRR@20
+
+Additional engineering metrics (not in paper main table):
+    P@1, P@10, P@15, NDCG@1, NDCG@10, NDCG@15, MRR@1, MRR@10, MRR@15, Recall@*, etc.
 """
 
 import torch
@@ -27,6 +33,9 @@ from src.evaluation.metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Paper main metrics (Table 2/3 format)
+PAPER_MAIN_METRICS = ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']
 
 
 class UPSTAREvaluator:
@@ -198,30 +207,48 @@ class UPSTAREvaluator:
         all_predictions = torch.cat(all_predictions, dim=0)
         all_targets = torch.cat(all_targets, dim=0)
 
-        # Compute metrics
-        metrics = compute_all_metrics(all_predictions, all_targets, k_values=k_values)
+        # Compute all metrics
+        all_metrics = compute_all_metrics(all_predictions, all_targets, k_values=k_values)
 
-        # Print results
-        print_main_results(metrics, f"{split.capitalize()} Results")
+        # Split into main (paper) vs additional (engineering)
+        main_metrics = {k: v for k, v in all_metrics.items() if k in PAPER_MAIN_METRICS}
+        additional_metrics = {k: v for k, v in all_metrics.items() if k not in PAPER_MAIN_METRICS}
+
+        # Print main table (paper format)
+        print_main_results(main_metrics, f"{split.capitalize()} Main Results (Paper Table)")
+
+        # Print additional metrics if any
+        if additional_metrics:
+            print_metrics(additional_metrics, f"{split.capitalize()} Additional Metrics", percentage=True)
 
         # Save results if requested
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Save metrics as JSON
+            # JSON: structured with main + additional sections
             metrics_path = output_dir / f'{split}_metrics.json'
             with open(metrics_path, 'w') as f:
-                json.dump(metrics, f, indent=2)
+                json.dump({
+                    'main_metrics':  {k: v for k, v in main_metrics.items()},
+                    'additional_metrics': {k: v for k, v in additional_metrics.items()}
+                }, f, indent=2)
             logger.info(f"Saved metrics to {metrics_path}")
 
-            # Save metrics as CSV
+            # CSV: main table first, then additional
             csv_path = output_dir / f'{split}_metrics.csv'
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Metric', 'Value'])
-                for name, value in metrics.items():
-                    writer.writerow([name, f'{value * 100:.2f}%'])
+                writer.writerow(['# === Paper Main Table ==='])
+                writer.writerow(['Metric', 'Value (%)'])
+                for name, value in main_metrics.items():
+                    writer.writerow([name, f'{value * 100:.2f}'])
+                if additional_metrics:
+                    writer.writerow([])
+                    writer.writerow(['# === Additional Engineering Metrics ==='])
+                    writer.writerow(['Metric', 'Value (%)'])
+                    for name, value in additional_metrics.items():
+                        writer.writerow([name, f'{value * 100:.2f}'])
             logger.info(f"Saved CSV to {csv_path}")
 
             # Save predictions if requested
@@ -234,7 +261,11 @@ class UPSTAREvaluator:
                     }, f)
                 logger.info(f"Saved predictions to {pred_path}")
 
-        return metrics
+        return {
+            'main_metrics': main_metrics,
+            'additional_metrics': additional_metrics,
+            '_flat': all_metrics   # all metrics merged (for backward compat)
+        }
 
     def evaluate_all_splits(
         self,
@@ -257,13 +288,13 @@ class UPSTAREvaluator:
 
         for split in ['train', 'val', 'test']:
             logger.info(f"\nEvaluating on {split} split...")
-            metrics = self.evaluate(
+            result = self.evaluate(
                 split=split,
                 k_values=k_values,
                 save_predictions=save_predictions,
                 output_dir=output_dir
             )
-            all_metrics[split] = metrics
+            all_metrics[split] = result
 
         return all_metrics
 
@@ -299,14 +330,14 @@ def evaluate_from_checkpoint(
     )
 
     # Evaluate
-    metrics = evaluator.evaluate(
+    result = evaluator.evaluate(
         split=split,
         k_values=k_values,
         save_predictions=True,
         output_dir=output_dir or Path(checkpoint_path).parent
     )
 
-    return metrics
+    return result
 
 
 if __name__ == '__main__':
@@ -323,7 +354,10 @@ if __name__ == '__main__':
     targets = torch.randint(0, num_items, (batch_size,))
 
     # Test metrics
-    metrics = compute_all_metrics(predictions, targets, k_values=[1, 5, 10, 15, 20, 50])
-    print_main_results(metrics, "Test Results")
+    all_metrics = compute_all_metrics(predictions, targets, k_values=[1, 5, 10, 15, 20, 50])
+    main = {k: v for k, v in all_metrics.items() if k in PAPER_MAIN_METRICS}
+    additional = {k: v for k, v in all_metrics.items() if k not in PAPER_MAIN_METRICS}
+    print_main_results(main, "Test Main Results (Paper Table)")
+    print_metrics(additional, "Test Additional Metrics", percentage=True)
 
     print("\nEvaluator module loaded successfully!")

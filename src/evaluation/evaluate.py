@@ -99,9 +99,10 @@ def main():
         )
 
         # Evaluate
+        k_values = config['evaluation'].get('k_values', [5, 10, 20])
         metrics = evaluator.evaluate(
             split=args.split,
-            k_values=[1, 5, 10, 15, 20, 50],
+            k_values=k_values,
             save_predictions=True,
             output_dir=str(output_dir)
         )
