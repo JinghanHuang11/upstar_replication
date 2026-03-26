@@ -1,0 +1,112 @@
+# UPSTAR Model Configuration for Ta-Feng Dataset
+# Full three-path model with staged loss training
+#
+# Paper Reference: UPSTAR - Section 7 (Implementation Details)
+# All hyperparameters aligned with paper specifications
+
+defaults:
+  - base
+
+# Dataset
+dataset:
+  name: tafeng
+  data_dir: data/raw/
+  processed_dir: data/processed/tafeng/
+  min_item_frequency: 2
+  cache_dir: data/cache/tafeng/
+
+# Model Configuration (Section 7.3: Model Hyperparameters)
+model:
+  num_items: null  # Will be loaded from metadata
+  embed_dim: 64
+  hidden_dim: 128          # Paper: hidden_size = 128
+  num_layers: 4            # Paper: num_layers = 4
+  dropout: 0.2
+  use_gate: true
+  max_seq_length: 50
+
+# Training (Section 7.4: Optimization Settings)
+training:
+  batch_size: 64           # Paper: batch_size = 64
+  learning_rate: 0.0003    # Paper: lr = 3e-4
+  weight_decay: 0.00001
+
+  # Staged training configuration
+  max_epochs_per_stage: 10
+  early_stop_patience: 3
+  metric_for_best: 'NDCG@10'
+
+  # Loss weights (for total loss computation)
+  lambda_global: 1.0
+  lambda_branch: 0.5
+  lambda_ortho: 0.1
+  lambda_distill: 0.3      # Note: This weights L_distill in total loss
+
+  # Stage 1: Global loss only
+  stage1:
+    use_global_loss: true
+    use_branch_loss: false
+    use_orthogonality_loss: false
+    use_distillation_loss: false
+
+  # Stage 2: Global + Branch losses
+  stage2:
+    use_global_loss: true
+    use_branch_loss: true
+    use_orthogonality_loss: false
+    use_distillation_loss: false
+
+  # Stage 3: Global + Branch + Orthogonality losses
+  stage3:
+    use_global_loss: true
+    use_branch_loss: true
+    use_orthogonality_loss: true
+    use_distillation_loss: false
+
+  # Stage 4: All losses (Section 3.3: Dual Teacher–Student)
+  stage4:
+    use_global_loss: true
+    use_branch_loss: true
+    use_orthogonality_loss: true
+    use_distillation_loss: true
+
+  # Orthogonality parameters (Section 3.3)
+  tau_s: 0.5              # Paper: τ_s = 0.5
+  tau_e: 0.5              # Paper: τ_e = 0.5
+
+  # Distillation parameters (Section 3.3)
+  distill_temperature: 3.0
+  lambda_distill: 0.7     # Paper: λ = 0.7 (weights teacher KL loss)
+
+  # Logging
+  log_gate_interval: 10
+  num_workers: 4
+
+# Evaluation
+evaluation:
+  k_values: [1, 5, 10, 15, 20, 50]
+  batch_size: 256
+
+# STB results (from Phase 3)
+stb:
+  stb_scores_path: outputs/phase3_stb/checkpoints/stb_scores.npy
+  motivation_labels_path: outputs/phase3_stb/checkpoints/motivation_labels.npy
+
+# Item embeddings (from Phase 2)
+item_embeddings:
+  checkpoint_dir: outputs/phase2_item_repr/checkpoints/
+
+# Output paths (for UPSTAR)
+logging:
+  log_dir: outputs/phase4_upstar/logs/
+  checkpoint_dir: outputs/phase4_upstar/checkpoints/
+  prediction_dir: outputs/phase4_upstar/predictions/
+
+# Results
+results:
+  output_dir: outputs/phase4_upstar/results/
+  model_type: upstar
+
+# Reproducibility
+seed: 42
+deterministic: true

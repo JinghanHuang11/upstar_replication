@@ -1,0 +1,112 @@
+# Evaluation Configuration for Ta-Feng Dataset
+
+defaults:
+  - base
+
+# Dataset
+dataset:
+  name: tafeng
+  data_dir: data/raw/
+  processed_dir: data/processed/tafeng/
+  cache_dir: data/cache/tafeng/
+
+# Model (for loading checkpoints)
+model:
+  embed_dim: 64
+  hidden_dim: 128
+  num_layers: 4
+  dropout: 0.2
+  use_gate: true
+  max_seq_length: 50
+
+# Evaluation settings
+evaluation:
+  # k values for metrics
+  k_values: [1, 5, 10, 15, 20, 50]
+
+  # Batch size for evaluation
+  batch_size: 256
+
+  # Main results table (default output)
+  main_metrics:
+    - Precision@5
+    - Precision@20
+    - NDCG@5
+    - NDCG@20
+    - MRR@5
+    - MRR@20
+
+  # Output formats
+  output_formats:
+    - json
+    - csv
+    - txt
+    # - latex  # Uncomment for LaTeX output
+    # - markdown  # Uncomment for Markdown output
+
+# STB results
+stb:
+  stb_scores_path: outputs/phase3_stb/checkpoints/stb_scores.npy
+  motivation_labels_path: outputs/phase3_stb/checkpoints/motivation_labels.npy
+
+# Training (for cross-validation)
+training:
+  batch_size: 64
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  max_epochs_per_stage: 10
+  early_stop_patience: 3
+  metric_for_best: 'NDCG@10'
+
+  # Loss weights
+  lambda_global: 1.0
+  lambda_branch: 0.5
+  lambda_ortho: 0.1
+  lambda_distill: 0.3
+
+  # Stage 4 configuration (all losses)
+  stage4:
+    use_global_loss: true
+    use_branch_loss: true
+    use_orthogonality_loss: true
+    use_distillation_loss: true
+
+  # Orthogonality parameters
+  tau_s: 0.5
+  tau_e: 0.5
+
+  # Distillation parameters
+  distill_temperature: 3.0
+  lambda_distill: 0.7
+
+# Cross-validation
+cross_validation:
+  # Number of folds
+  num_folds: 10
+
+  # Random seed for reproducibility
+  random_seed: 42
+
+# Checkpoint
+checkpoint:
+  # Path to model checkpoint (for single evaluation)
+  # If None, will use latest from checkpoint_dir
+  path: null
+
+  # Checkpoint directory
+  checkpoint_dir: outputs/phase4_upstar/checkpoints/
+
+# Output
+logging:
+  # Log directory
+  log_dir: outputs/logs/evaluation/
+
+  # Evaluation results directory
+  eval_dir: outputs/results/evaluation/
+
+  # Cross-validation results directory
+  cv_dir: outputs/results/cross_validation/
+
+# Reproducibility
+seed: 42
+deterministic: true

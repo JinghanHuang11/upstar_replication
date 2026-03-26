@@ -1,0 +1,73 @@
+# STB Computation Configuration
+#
+# Paper Reference: UPSTAR - Section 7 (Implementation Details)
+# All hyperparameters aligned with paper specifications
+
+defaults:
+  - base
+
+dataset:
+  name: tafeng
+  data_dir: data/raw/
+  processed_dir: data/processed/tafeng/
+  min_item_frequency: 2
+  cache_dir: data/cache/tafeng/
+
+# Model (Section 7.1: Motivation Identification)
+model:
+  input_dim: 128        # Item embedding dimension from Phase 2
+  hidden_dim: 512       # Paper: STB encoder hidden size = 512
+  num_layers: 1         # Paper: STB GNN layers = 1
+  dropout: 0.1
+
+# Optimizer (Section 7.1)
+optimizer:
+  type: 'adam'
+  learning_rate: 0.001   # Paper: lr = 1e-3
+
+# STB Computation (Section 7.1: Perturbation Parameters)
+stb:
+  # Perturbation rounds
+  perturbation_rounds: 40    # Paper: β = 40
+
+  # Feature perturbation (PGD)
+  feature_step_size: 0.4     # Paper: α = 0.4
+
+  # Feature perturbation budget
+  epsilon_x: 0.1             # Paper: ε_x = 0.1
+
+  # Edge perturbation budget
+  epsilon_a: 0.1             # Paper: ε_a = 0.1
+  epsilon: 0.1               # Paper: ε = 0.1
+
+  # Time graph parameters (Section 7.1)
+  time_granularity: 'day'    # Paper: day-level time nodes
+  num_time_nodes: 50          # Paper: ρ = 50
+
+  # Classification thresholds (Section 3.1.4)
+  stable_ratio: 0.5          # Paper: top 50% as stable
+  exploratory_ratio: 0.4      # Paper: bottom 40% as exploratory
+  # remaining 10% = uncategorized
+
+# Backward compatibility (legacy parameters)
+# These are used if advanced perturbation is disabled
+feature_noise_std: 0.1
+edge_removal_rate: 0.1
+edge_addition_rate: 0.1
+
+# Evaluation
+evaluation:
+  k_values: [5, 10, 20]
+
+# Reproducibility
+seed: 42
+deterministic: true
+
+# Item embeddings from Phase 2
+item_embeddings_path: outputs/phase2_item_repr/checkpoints/item_embeddings.pt
+
+# Logging
+logging:
+  log_dir: outputs/phase3_stb/logs/
+  checkpoint_dir: outputs/phase3_stb/checkpoints/
+  prediction_dir: outputs/phase3_stb/predictions/

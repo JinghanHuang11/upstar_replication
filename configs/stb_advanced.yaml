@@ -1,0 +1,95 @@
+# Advanced STB Configuration (Phase 6: Upgrades)
+# Supports multiple perturbation strategies with comparison
+# Inherits from stb.yaml (aligned with paper parameters)
+
+defaults:
+  - stb
+
+# Dataset
+dataset:
+  name: tafeng
+  data_dir: data/raw/
+  processed_dir: data/processed/tafeng/
+  min_item_frequency: 2
+  cache_dir: data/cache/tafeng/
+
+# STB Computation
+stb:
+  # Item embeddings (from Phase 2)
+  item_embeddings_path: outputs/phase2_item_repr/checkpoints/item_embeddings.pt
+
+  # Output paths
+  output_dir: outputs/phase3_stb_advanced/checkpoints/
+
+  # Perturbation rounds (paper: β=40)
+  perturbation_rounds: 40
+
+  # Motivation classification thresholds
+  top_percent: 0.5      # Stable
+  middle_percent: 0.1   # Uncategorized
+  bottom_percent: 0.4   # Exploratory
+
+# Advanced Perturbation Configuration
+advanced:
+  # Which version(s) to run
+  # Options: 'v1', 'upgrade1', 'upgrade2', 'upgrade3', 'full', 'all'
+  versions: ['v1', 'upgrade1', 'full']
+
+  # Comparison mode
+  compare_versions: true
+  comparison_output: outputs/phase3_stb_advanced/checkpoints/comparison.json
+
+  # Upgrade 1: PGD Feature Perturbation
+  upgrade1:
+    epsilon: 0.1          # L∞ budget
+    num_steps: 10         # PGD steps
+    step_size: 0.01       # PGD step size
+    loss_type: 'repr_change'
+
+  # Upgrade 2: Continuous Topology Perturbation
+  upgrade2:
+    edge_budget: 0.1      # Fraction of edges to modify
+    num_steps: 10
+    step_size: 0.1
+    temperature: 1.0      # Sigmoid temperature
+
+  # Upgrade 3: MI-based Perturbation
+  upgrade3:
+    epsilon: 0.1
+    num_steps: 10
+    step_size: 0.01
+    mi_hidden_dim: 256
+    mi_num_negatives: 10
+
+  # Upgrade 4: Full Iterative Worst-Case
+  full:
+    num_iterations: 3     # Alternating feature + topology iterations
+    feature_perturbation: 'pgd'      # 'pgd', 'mi', or 'v1'
+    topology_perturbation: 'continuous'  # 'continuous' or 'v1'
+
+    # Feature config (passed to feature perturbation)
+    feature_config:
+      epsilon: 0.1
+      num_steps: 5        # Fewer steps per iteration
+      step_size: 0.01
+
+    # Topology config (passed to topology perturbation)
+    topology_config:
+      edge_budget: 0.1
+      num_steps: 5
+      step_size: 0.1
+
+# Model
+model:
+  hidden_dim: 512
+  dropout: 0.1
+
+# Evaluation
+evaluation:
+  # Test impact on recommendation performance
+  test_upstar: true
+  upstar_config: configs/tafeng_upstar.yaml
+
+# Logging
+logging:
+  log_dir: outputs/logs/stb_advanced/

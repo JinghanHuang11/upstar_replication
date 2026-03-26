@@ -1,0 +1,45 @@
+# Item Representation Learning Configuration
+
+defaults:
+  - base
+
+dataset:
+  name: tafeng
+  data_dir: data/raw/
+  processed_dir: data/processed/tafeng/
+  min_item_frequency: 2
+  cache_dir: data/cache/tafeng/
+
+# Item Representation Model
+model:
+  embed_dim: 128
+  num_layers: 1
+  use_remember_gate: true
+  dropout: 0.1
+
+# Training
+training:
+  batch_size_edges: 10000  # Number of edges per batch
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 50
+  eval_interval: 5
+  num_eval_edges: 1000
+
+# Item Graph
+item_repr:
+  time_threshold: 86400  # Session time threshold (1 day)
+
+# Evaluation
+evaluation:
+  k_values: [5, 10, 20]
+
+# Reproducibility
+seed: 42
+deterministic: true
+
+# Logging
+logging:
+  log_dir: outputs/phase2_item_repr/logs/
+  checkpoint_dir: outputs/phase2_item_repr/checkpoints/
+  prediction_dir: outputs/phase2_item_repr/predictions/

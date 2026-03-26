@@ -1,0 +1,24 @@
+# Test baseline config (small subset)
+dataset:
+  name: tafeng
+  processed_dir: data/processed/tafeng/
+
+model:
+  embed_dim: 64
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.2
+  max_seq_length: 50
+
+training:
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 10
+  early_stop_patience: 3
+  metric_for_best: 'NDCG@10'
+
+evaluation:
+  k_values: [5, 10, 20]
+
+seed: 42
