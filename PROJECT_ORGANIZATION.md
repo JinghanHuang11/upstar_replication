@@ -1,9 +1,9 @@
 # UPSTAR 项目组织详解
 
-> **最后更新**: 2026-03-26
-> **项目状态**: ✅ Phase 1-6 全部完成 | Phase 4/5 论文对齐改进完成
-> **代码规模**: 40 个 Python 源文件 | 9 个配置文件 | 8 个脚本
-> **自检状态**: 12/12 核心检查项通过；待端到端训练验证
+> **最后更新**: 2026-03-28
+> **项目状态**: ✅ Phase 0-6 全部完成 | Phase 0/1/4/5 论文对齐改进完成
+> **代码规模**: 40+ 个 Python 源文件 | 10+ 个配置文件 | 9+ 个脚本
+> **自检状态**: Phase 0/1 自检通过，Phase 4/5 自检通过；待端到端训练验证
 
 ---
 
@@ -53,7 +53,27 @@
 
 ---
 
-## 二、论文对齐改进（2026-03-26）
+## 二、论文对齐改进（2026-03-28）
+
+### Phase 0 最新改进（2026-03-28）⭐
+
+| 模块 | 改进内容 | 状态 |
+|------|----------|------|
+| **10-Fold CV** | 实现 10 折交叉验证划分（论文对齐） | ✅ |
+| **Timestamp 保留** | 序列格式 `[(item, timestamp), ...]` | ✅ |
+| **双模式支持** | leave_one_out（工程）+ cv10（论文） | ✅ |
+| **Metadata 增强** | 添加统计信息（avg/min/max/std） | ✅ |
+| **向后兼容** | 支持旧格式 `[item, ...]` 读取 | ✅ |
+
+### Phase 1 最新改进（2026-03-28）⭐
+
+| 模块 | 改进内容 | 状态 |
+|------|----------|------|
+| **Baseline LSTM** | 保持单路（无分支），hidden=128, layers=4 | ✅ |
+| **双模式训练** | leave_one_out + cv10 统一入口 | ✅ |
+| **论文对齐指标** | P@5/20, NDCG@5/20, MRR@5/20 | ✅ |
+| **训练脚本统一** | `train_baseline.py` 支持两种模式 | ✅ |
+| **结果格式一致** | test_results.pkl / cv_results.pkl | ✅ |
 
 ### Phase 4 最新改进（2026-03-26）⭐
 
@@ -255,16 +275,16 @@ NDCG@10,9.67%
 
 ## 六、六个实验阶段
 
-### Phase 0: 数据预处理
+### Phase 0: 数据预处理（✨ 2026-03-28 改进）
 
-**目标**：加载原始数据，构建用户购买序列，划分 train/val/test
+**目标**：加载原始数据，构建用户购买序列，支持 leave_one_out 和 10-fold CV 两种划分模式
 
 **输入**：`data/raw/ta_feng.csv`
 
 **输出格式**：
 - 序列格式：`[(item_idx, timestamp), ...]` — **保留 timestamp 用于 day-level item-time graph**
 - Leave-One-Out 模式：
-  - `data/processed/tafeng/metadata.pkl`
+  - `data/processed/tafeng/metadata.pkl`（✨ v1.1：含统计信息）
   - `data/processed/tafeng/train_sequences.pkl`
   - `data/processed/tafeng/val_sequences.pkl`
   - `data/processed/tafeng/test_sequences.pkl`
@@ -278,12 +298,18 @@ NDCG@10,9.67%
 
 | 模式 | 配置文件 | 划分策略 | 适用场景 |
 |------|----------|----------|----------|
-| **Leave-One-Out** | `configs/tafeng_baseline.yaml` | last→test, second_last→val, others→train | 快速验证 / 单次运行 |
+| **Leave-One-Out** | `configs/tafeng_baseline.yaml` | last→test, second_last→val, others→train | 快速验证 / 工程调试 |
 | **10-Fold CV** | `configs/tafeng_cv.yaml` | 用户级 10 折交叉验证（论文对齐） | 论文实验 / 最终结果 |
 
 **脚本**：
 - Leave-One-Out: `bash scripts/run_preprocess.sh`
 - 10-Fold CV: `bash scripts/run_preprocess_cv.sh`
+
+**✨ Phase 0 改进**：
+- 实现 10 折交叉验证划分（论文对齐）
+- 序列保留 timestamp（支持 Phase 2/3 图构建）
+- Metadata v1.1 增强统计信息（avg/min/max/std sequence length）
+- 向后兼容旧格式 `[item, ...]`
 
 **⚠️ 重要**：
 - 序列包含 timestamps，支持 Phase 2/3 的图构建
@@ -291,17 +317,33 @@ NDCG@10,9.67%
 
 ---
 
-### Phase 1: Baseline 训练
+### Phase 1: Baseline LSTM 训练（✨ 2026-03-28 改进）
 
-**目标**：训练 LSTM 基线模型，确立性能基准
+**目标**：训练单路 LSTM 基线模型，确立性能基准
 
 **输入**：Phase 0 序列数据
 
-**输出**：`outputs/baselines/tafeng/single_run/checkpoints/best_model.pt`
+**输出**：
+- 单次模式：`outputs/baselines/tafeng/single_run/checkpoints/best_model.pt`
+- CV 模式：`outputs/baselines/tafeng/cv/fold_{i}/best_model.pt`
 
-**脚本**：`bash scripts/run_tafeng_baseline.sh [single|cv]`
+**脚本**：
+- `bash scripts/run_tafeng_baseline.sh [single|cv]`
+- 或直接调用：`python src/training/train_baseline.py --config configs/tafeng_baseline.yaml --mode auto`
 
-**性能**：NDCG@10 ~0.097, P@10 ~0.097, MRR@10 ~0.040
+**✨ Phase 1 改进**：
+- Baseline 保持单路 LSTM（无 S/E/O 分支，无 fusion gate，无 STB）
+- 超参数对齐论文：hidden_dim=128, num_layers=4
+- 支持两种训练模式：leave_one_out（单次）+ cv10（10 折交叉验证）
+- 主指标输出：P@5/20, NDCG@5/20, MRR@5/20（与 UPSTAR 一致）
+- 统一训练入口，自动检测 split_method 并路由
+
+**Baseline 设计原则**：
+- 简单可复现：单路 LSTM，无复杂结构
+- 公平对比：与 UPSTAR 相同的超参数和评估指标
+- 论文对齐：hidden=128, layers=4（Section 7.3）
+
+**性能预期**：NDCG@20 ~0.118, P@20 ~0.101, MRR@20 ~0.069
 
 ---
 
@@ -496,4 +538,28 @@ y_hat_global = Linear(z_global)
 
 ---
 
-**最后更新**: 2026-03-26
+---
+
+## Phase 0/1 文档索引
+
+### Phase 0 文档
+
+| 文档 | 内容 |
+|------|------|
+| [phase0_split_modes.md](docs/phase0_split_modes.md) | leave_one_out vs cv10 划分模式详解 |
+| [phase0_sequence_format.md](docs/phase0_sequence_format.md) | 序列格式 `[(item, timestamp), ...]` 规范 |
+| [phase0_metadata_format.md](docs/phase0_metadata_format.md) | Metadata v1.1 格式说明 |
+| [phase0_self_check.md](docs/phase0_self_check.md) | Phase 0 自检报告 |
+
+### Phase 1 文档
+
+| 文档 | 内容 |
+|------|------|
+| [phase1_baseline_design.md](docs/phase1_baseline_design.md) | Baseline LSTM 设计说明 |
+| [phase1_training_modes.md](docs/phase1_training_modes.md) | 训练模式（single/cv）说明 |
+| [phase1_evaluation_metrics.md](docs/phase1_evaluation_metrics.md) | 评估指标（P@K, NDCG@K, MRR@K）说明 |
+| [phase1_self_check.md](docs/phase1_self_check.md) | Phase 1 自检报告 |
+
+---
+
+**最后更新**: 2026-03-28

@@ -194,15 +194,39 @@ upstar/
 
 ## Pipeline
 
-### Phase 1: Data Preparation
+### Phase 0: Data Preprocessing
 
 1. **Preprocess** - 加载原始数据，构建用户序列（**保留 timestamp**）
-2. **Item Graph** - 构建会话内 + 跨会话商品共现图
-3. **Item-Time Graph** - 构建 day-level item-time 二部图
+2. **Sequence Split** - 支持 leave_one_out 和 10-fold CV 两种模式
+3. **Metadata** - 增强统计信息（avg/min/max/std sequence length）
+
+**两种划分策略**：
+
+| 模式 | 配置 | 划分方式 | 适用场景 |
+|------|------|----------|----------|
+| **Leave-One-Out** | `split_method: leave_one_out` | last→test, second_last→val, others→train | 快速验证 / 工程调试 |
+| **10-Fold CV** | `split_method: cv10` | 用户级 10 折交叉验证 | 论文实验 / 最终结果 |
+
+**输出格式**：
+- 序列：`[(item_idx, timestamp), ...]` — 保留 timestamp 用于 Phase 2/3 图构建
+- Leave-One-Out: `train_sequences.pkl`, `val_sequences.pkl`, `test_sequences.pkl`
+- 10-Fold CV: `cv_splits/fold_{i}/train_sequences.pkl`, `test_sequences.pkl`
+
+### Phase 1: Baseline LSTM Training
+
+1. **Baseline Model** - 单路 LSTM（hidden=128, layers=4）
+2. **Two Training Modes** - 支持 leave_one_out 和 cv10
+3. **Metrics** - P@5/20, NDCG@5/20, MRR@5/20（论文主表口径）
+
+**Baseline 设计**：
+- 单路 LSTM（无 S/E/O 分支，无 fusion gate，无 STB）
+- 论文对齐超参数：hidden_dim=128, num_layers=4
+- 与 UPSTAR 相同的评估指标，确保公平对比
 
 ### Phase 2: Item Representation
 
-1. **Item-GNN** - 训练 in/out 邻居分离聚合（1-layer, embed=128）
+1. **Item Graph** - 构建会话内 + 跨会话商品共现图
+2. **Item-GNN** - 训练 in/out 邻居分离聚合（1-layer, embed=128）
 
 ### Phase 3: STB Calculation
 
@@ -326,6 +350,60 @@ python -m src.evaluation.comparison # comparison table 更新测试
 
 ---
 
-**最后更新**: 2026-03-26
+**最后更新**: 2026-03-28
 
 **论文**: UPSTAR - Uncovering Purchase Motivations for Sequential Recommendation
+
+---
+
+## Phase 0/1 更新（2026-03-28）
+
+### Phase 0 — 数据预处理改进
+
+| # | 模块 | 改进内容 | 状态 |
+|---|------|----------|------|
+| 1 | **10-Fold CV** | 实现 10 折交叉验证划分（论文对齐） | ✅ |
+| 2 | **Timestamp 保留** | 序列格式 `[(item, timestamp), ...]` | ✅ |
+| 3 | **双模式支持** | leave_one_out（工程）+ cv10（论文） | ✅ |
+| 4 | **Metadata 增强** | 添加统计信息（avg/min/max/std） | ✅ |
+| 5 | **向后兼容** | 支持旧格式 `[item, ...]` 读取 | ✅ |
+
+**新增文件**：
+- `configs/tafeng_cv.yaml` — CV10 模式配置
+- `scripts/run_preprocess_cv.sh` — CV 预处理脚本
+- `docs/phase0_*.md` — Phase 0 详细文档
+
+### Phase 1 — Baseline 训练改进
+
+| # | 模块 | 改进内容 | 状态 |
+|---|------|----------|------|
+| 6 | **Baseline LSTM** | 保持单路（无分支），hidden=128, layers=4 | ✅ |
+| 7 | **双模式训练** | leave_one_out + cv10 统一入口 | ✅ |
+| 8 | **论文对齐指标** | P@5/20, NDCG@5/20, MRR@5/20 | ✅ |
+| 9 | **训练脚本统一** | `train_baseline.py` 支持两种模式 | ✅ |
+| 10 | **结果格式一致** | test_results.pkl / cv_results.pkl | ✅ |
+
+**新增文件**：
+- `docs/phase1_*.md` — Phase 1 详细文档
+- `docs/phase1_self_check.md` — Phase 1 自检报告
+
+### 关键变更
+
+**Phase 0 数据格式**：
+- 旧格式：`[item1, item2, ...]`
+- 新格式：`[(item1, ts1), (item2, ts2), ...]` — 保留 timestamp 用于 Phase 2/3
+
+**Phase 0 划分模式**：
+- leave_one_out: 单次 train/val/test 划分
+- cv10: 10 个 fold，每个 fold 包含 train/test
+
+**Phase 1 训练模式**：
+- 单次模式：train/val/test，early stopping on val
+- CV 模式：10 个 fold 分别训练，输出 mean±std
+
+**文档**：
+- [docs/phase0_split_modes.md](docs/phase0_split_modes.md) — 划分模式说明
+- [docs/phase0_sequence_format.md](docs/phase0_sequence_format.md) — 序列格式说明
+- [docs/phase1_baseline_design.md](docs/phase1_baseline_design.md) — Baseline 设计
+- [docs/phase1_training_modes.md](docs/phase1_training_modes.md) — 训练模式说明
+- [docs/phase1_self_check.md](docs/phase1_self_check.md) — Phase 1 自检报告

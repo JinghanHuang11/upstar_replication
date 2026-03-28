@@ -1,9 +1,9 @@
 # 项目文件组织结构
 
-> **最后更新**: 2026-03-26
-> **代码规模**: 40 个 Python 源文件 | 9 个配置文件 | 8 个脚本
-> **论文对齐**: 已完成 Phase 4/5 论文对齐改进（FusionGate + 联合损失 + 条件蒸馏 + 主指标口径）
-> **代码状态**: 12/12 自检通过，待端到端训练验证
+> **最后更新**: 2026-03-28
+> **代码规模**: 40+ 个 Python 源文件 | 10+ 个配置文件 | 9+ 个脚本
+> **论文对齐**: 已完成 Phase 0/1/4/5 论文对齐改进（CV10 + Baseline + FusionGate + 联合损失 + 主指标口径）
+> **代码状态**: Phase 0/1 自检通过，Phase 4/5 自检通过，待端到端训练验证
 
 ---
 
@@ -11,9 +11,10 @@
 
 ```
 upstar/
-├── configs/              # 配置文件 (9个) - 已与论文 Section 7 对齐
+├── configs/              # 配置文件 (10+个) - 已与论文 Section 7 对齐
 │   ├── baseline.yaml              # Baseline 测试配置
-│   ├── tafeng_baseline.yaml       # Tafeng Baseline 配置
+│   ├── tafeng_baseline.yaml       # Tafeng Baseline 配置（✓ Phase 1：hidden=128, layers=4）
+│   ├── tafeng_cv.yaml             # Tafeng CV10 配置（✓ Phase 0：10-fold CV）
 │   ├── tafeng_upstar.yaml         # Tafeng UPSTAR 配置（✓ 论文对齐：lr=3e-4, λ=0.7）
 │   ├── tafeng_eval.yaml           # Tafeng 评估配置（✓ 已更新：主指标 P@5/20, NDCG@5/20, MRR@5/20）
 │   ├── test_baseline.yaml         # Baseline 测试
@@ -36,8 +37,17 @@ upstar/
 │   └── cache/
 │       └── tafeng/                # 图缓存
 
-├── docs/                 # 详细文档 (22个)
-│   ├── phase1/           # Phase 1 文档 (6个)
+├── docs/                 # 详细文档 (30+个)
+│   ├── phase0/           # Phase 0 文档 (4个) ✨ 新增
+│   │   ├── phase0_split_modes.md      # 划分模式说明
+│   │   ├── phase0_sequence_format.md  # 序列格式说明
+│   │   ├── phase0_metadata_format.md  # Metadata 格式说明
+│   │   └── phase0_self_check.md       # Phase 0 自检报告
+│   ├── phase1/           # Phase 1 文档 (4个) ✨ 更新
+│   │   ├── phase1_baseline_design.md  # Baseline 设计说明
+│   │   ├── phase1_training_modes.md   # 训练模式说明
+│   │   ├── phase1_evaluation_metrics.md # 评估指标说明
+│   │   └── phase1_self_check.md       # Phase 1 自检报告
 │   ├── phase2/           # Phase 2 文档 (2个)
 │   ├── phase3/           # Phase 3 文档 (2个)
 │   ├── phase4/           # Phase 4 文档 (1个)
@@ -49,9 +59,10 @@ upstar/
 │   │   └── upstar_rec.md # 论文精读笔记
 │   └── FULL_EXPERIMENT_README.md
 
-├── scripts/              # 运行脚本 (8个)
-│   ├── run_preprocess.sh          # 数据预处理
-│   ├── run_tafeng_baseline.sh     # Baseline 训练
+├── scripts/              # 运行脚本 (9+个)
+│   ├── run_preprocess.sh          # 数据预处理（leave_one_out）
+│   ├── run_preprocess_cv.sh       # 数据预处理（cv10）✨ 新增
+│   ├── run_tafeng_baseline.sh     # Baseline 训练（✓ Phase 1：支持双模式）
 │   ├── run_item_repr.sh           # Item 表示学习
 │   ├── run_stb.sh                 # STB 计算
 │   ├── run_stb_advanced.sh        # 高级 STB
@@ -59,11 +70,11 @@ upstar/
 │   ├── run_eval.sh                # 模型评估（✓ 已更新：主指标口径）
 │   └── compare_results.sh         # 结果对比（✓ 已更新：Precision@K 主表）
 
-├── src/                  # 源代码 (40个 Python 文件)
-│   ├── data/             # 数据处理 (5个)
+├── src/                  # 源代码 (40+个 Python 文件)
+│   ├── data/             # 数据处理 (5个) ✨ Phase 0 改进
 │   ├── graphs/           # 图构建 (4个) - Phase 3 改进
 │   ├── models/           # 模型 (8个) - Phase 4 改进
-│   ├── training/         # 训练 (9个) - Phase 4 改进
+│   ├── training/         # 训练 (10+个) - Phase 1/4 改进 ✨
 │   ├── evaluation/       # 评估 (7个) - Phase 5 改进
 │   ├── experiments/      # 实验管理 (4个)
 │   └── utils/            # 工具 (4个)
@@ -91,11 +102,11 @@ upstar/
 
 ## 源代码清单 (src/)
 
-### src/models/ — 模型定义（Phase 4 改进）
+### src/models/ — 模型定义（Phase 1/4 改进）
 
-| 文件 | 功能 | Phase 4 状态 |
+| 文件 | 功能 | Phase 状态 |
 |------|------|-------------|
-| `baseline_lstm.py` | LSTM Baseline | - |
+| `baseline_lstm.py` | LSTM Baseline（✓ Phase 1：hidden=128, layers=4） | ✅ Phase 1 |
 | `item_gnn.py` | Item-GNN（in/out 邻居分离） | ✅ Phase 3 |
 | `stb_encoder.py` | STB 编码器 | ✅ Phase 3 |
 | `stb_encoder_advanced.py` | 进阶 STB 编码器 | ✅ Phase 3 |
@@ -110,12 +121,12 @@ upstar/
 
 ---
 
-### src/training/ — 训练脚本（Phase 4 改进）
+### src/training/ — 训练脚本（Phase 1/4 改进）
 
-| 文件 | 功能 | Phase 4 状态 |
+| 文件 | 功能 | Phase 状态 |
 |------|------|-------------|
-| `train_baseline.py` | LSTM Baseline 单次训练 | - |
-| `cross_validation_baseline.py` | Baseline 10 折交叉验证 | - |
+| `train_baseline.py` | LSTM Baseline 训练（✓ Phase 1：支持 leave_one_out + cv10） | ✅ **Phase 1 核心改进** |
+| `cross_validation_baseline.py` | Baseline 10 折交叉验证 | ✅ Phase 1 |
 | `train_item_repr.py` | Item-GNN 训练 | - |
 | `train_stb.py` | STB V1 计算 | ✅ Phase 3 |
 | `train_stb_advanced.py` | 进阶 STB 计算 | - |
@@ -178,7 +189,8 @@ upstar/
 | 文件 | 用途 | 对齐状态 |
 |------|------|----------|
 | `baseline.yaml` | Baseline 测试配置 | - |
-| `tafeng_baseline.yaml` | Tafeng Baseline 训练 | - |
+| `tafeng_baseline.yaml` | Tafeng Baseline 训练 | **✓ Phase 1**：hidden=128, layers=4, split_method=leave_one_out |
+| `tafeng_cv.yaml` | Tafeng CV10 配置 | **✓ Phase 0**：split_method=cv10, num_folds=10 |
 | `tafeng_upstar.yaml` | **Tafeng UPSTAR 训练** | **✓ 论文对齐**：lr=3e-4, batch=64, hidden=128, layers=4, λ=0.7, τ_s=τ_e=0.5 |
 | `tafeng_eval.yaml` | **Tafeng 评估** | **✓ 已更新**：主指标 P@5/20, NDCG@5/20, MRR@5/20 |
 | `test_baseline.yaml` | Baseline 功能测试 | - |
@@ -300,4 +312,44 @@ bash scripts/run_eval.sh
 
 ---
 
-**最后更新**: 2026-03-26
+---
+
+## Phase 0/1 改进总结（2026-03-28）
+
+### Phase 0 — 数据预处理
+
+| # | 模块 | 对应文件 | 改进内容 |
+|---|------|----------|----------|
+| 1 | **10-Fold CV** | `src/data/build_sequences.py` | 实现 10 折交叉验证划分（论文对齐） |
+| 2 | **Timestamp 保留** | `src/data/build_sequences.py` | 序列格式 `[(item, timestamp), ...]` |
+| 3 | **双模式支持** | `src/data/build_sequences.py` | leave_one_out + cv10 配置驱动 |
+| 4 | **Metadata 增强** | `src/data/preprocess.py` | 添加统计信息（avg/min/max/std） |
+| 5 | **向后兼容** | `src/data/build_sequences.py` | 支持旧格式 `[item, ...]` 读取 |
+
+### Phase 1 — Baseline 训练
+
+| # | 模块 | 对应文件 | 改进内容 |
+|---|------|----------|----------|
+| 6 | **Baseline LSTM** | `src/models/baseline_lstm.py` | num_layers: 2→4（论文对齐） |
+| 7 | **双模式训练** | `src/training/train_baseline.py` | leave_one_out + cv10 统一入口 |
+| 8 | **论文对齐指标** | `src/evaluation/metrics.py` | P@5/20, NDCG@5/20, MRR@5/20 |
+| 9 | **训练脚本统一** | `src/training/train_baseline.py` | 自动检测 split_method，路由到对应训练流程 |
+| 10 | **结果格式一致** | `src/training/train_baseline.py` | test_results.pkl / cv_results.pkl |
+
+### 新增文档
+
+**Phase 0**：
+- `docs/phase0_split_modes.md` — 划分模式详细说明
+- `docs/phase0_sequence_format.md` — 序列格式规范
+- `docs/phase0_metadata_format.md` — Metadata v1.1 格式
+- `docs/phase0_self_check.md` — Phase 0 自检报告
+
+**Phase 1**：
+- `docs/phase1_baseline_design.md` — Baseline 设计说明
+- `docs/phase1_training_modes.md` — 训练模式说明
+- `docs/phase1_evaluation_metrics.md` — 评估指标说明
+- `docs/phase1_self_check.md` — Phase 1 自检报告
+
+---
+
+**最后更新**: 2026-03-28
