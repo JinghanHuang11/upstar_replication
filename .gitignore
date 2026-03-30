@@ -57,6 +57,7 @@ outputs/phase2_item_repr/
 outputs/phase3_stb/
 outputs/phase4_upstar/
 outputs/comparison/
+outputs/smoke_test/
 !outputs/phase1_baseline/.gitkeep
 !outputs/phase2_item_repr/.gitkeep
 !outputs/phase3_stb/.gitkeep

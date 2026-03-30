@@ -94,10 +94,12 @@ def main():
     # 5. 暂存需要上传的文件（排除数据/输出/缓存）
     targets = [
         "src/", "configs/", "scripts/", "tests/", "docs/",
+        "pipeline_steps/", "examples/",
         "requirements.txt", "pytest.ini", "README.md",
         "PROJECT_STRUCTURE.md",
         "PROJECT_ORGANIZATION.md", "RUN_EXPERIMENTS.md",
-        "run_full_experiment.py", "upload_to_github.py", ".gitignore",
+        "run_full_experiment.py", "run_pipeline.py",
+        "test_pipeline_steps.py", "upload_to_github.py", ".gitignore",
         "data/raw/.gitkeep", "data/processed/.gitkeep", "data/cache/.gitkeep",
         "data/raw/ta_feng.csv",
         "outputs/checkpoints/.gitkeep", "outputs/logs/.gitkeep",
@@ -107,6 +109,7 @@ def main():
         "outputs/phase3_stb/.gitkeep",
         "outputs/phase4_upstar/.gitkeep",
         "outputs/comparison/.gitkeep",
+        "outputs/README.md",
     ]
     run("git add " + " ".join(f'"{t}"' for t in targets))
 
