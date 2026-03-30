@@ -206,7 +206,7 @@ def compute_stb_scores_paper_aligned(
                 perturbed_graph_device['item_node_indices']
             )
 
-        all_perturbed_repr.append(perturbed_repr.cpu())
+        all_perturbed_repr.append(perturbed_repr)
 
     # Stack all perturbed representations: [num_rounds, num_items, dim]
     all_perturbed_repr = torch.stack(all_perturbed_repr, dim=0)
@@ -329,7 +329,7 @@ def compute_stb_scores_baseline(
                 perturbed_graph_device['item_node_indices']
             )
 
-        all_perturbed_repr.append(perturbed_repr.cpu())
+        all_perturbed_repr.append(perturbed_repr)
 
     # Stack all perturbed representations: [num_rounds, num_items, dim]
     all_perturbed_repr = torch.stack(all_perturbed_repr, dim=0)
