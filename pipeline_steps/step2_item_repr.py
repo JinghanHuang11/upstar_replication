@@ -91,16 +91,8 @@ class Step2ItemRepr(BaseStep):
 
             result = subprocess.run(
                 cmd,
-                check=True,
-                capture_output=True,
-                text=True
+                check=True
             )
-
-            # Log output
-            if result.stdout:
-                for line in result.stdout.split('\n'):
-                    if line.strip():
-                        self.logger.info(f"  {line}")
 
             # Check output
             embeddings_file = self.output_dir / 'checkpoints' / 'item_embeddings.pt'
