@@ -263,9 +263,15 @@ def save_item_embeddings(
     """
     if use_graph_enhanced:
         # Get FINAL embeddings AFTER GNN message passing (RECOMMENDED)
+        # Ensure edge_weight is on the same device as model
+        edge_weight = graph.get('edge_weight', None)
+        if edge_weight is not None:
+            device = next(model.parameters()).device
+            edge_weight = edge_weight.to(device)
+
         embeddings = model.get_final_item_embeddings(
             graph['edge_index'],
-            graph.get('edge_weight', None)
+            edge_weight
         )
         logger.info(f"Saving GRAPH-ENHANCED item embeddings (after GNN message passing)")
     else:
