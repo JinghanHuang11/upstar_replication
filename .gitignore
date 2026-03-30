@@ -52,6 +52,16 @@ outputs/predictions/*
 !outputs/checkpoints/.gitkeep
 !outputs/logs/.gitkeep
 !outputs/predictions/.gitkeep
+outputs/phase1_baseline/
+outputs/phase2_item_repr/
+outputs/phase3_stb/
+outputs/phase4_upstar/
+outputs/comparison/
+!outputs/phase1_baseline/.gitkeep
+!outputs/phase2_item_repr/.gitkeep
+!outputs/phase3_stb/.gitkeep
+!outputs/phase4_upstar/.gitkeep
+!outputs/comparison/.gitkeep
 outputs/experiments/
 outputs/pipeline_steps/
 inspect_global.py

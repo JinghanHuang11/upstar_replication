@@ -102,6 +102,11 @@ def main():
         "data/raw/ta_feng.csv",
         "outputs/checkpoints/.gitkeep", "outputs/logs/.gitkeep",
         "outputs/predictions/.gitkeep",
+        "outputs/phase1_baseline/.gitkeep",
+        "outputs/phase2_item_repr/.gitkeep",
+        "outputs/phase3_stb/.gitkeep",
+        "outputs/phase4_upstar/.gitkeep",
+        "outputs/comparison/.gitkeep",
     ]
     run("git add " + " ".join(f'"{t}"' for t in targets))
 
