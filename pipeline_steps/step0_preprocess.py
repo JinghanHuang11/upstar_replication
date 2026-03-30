@@ -80,13 +80,13 @@ class Step0Preprocess(BaseStep):
     def run(self) -> bool:
         """Run preprocessing"""
         try:
-            from src.data.preprocess import Preprocessor
+            from src.data.preprocess import get_preprocessor
             from src.data.build_sequences import SequenceBuilder
 
             config = self.load_config()
 
             self.logger.info("Step 1: Loading and preprocessing raw data...")
-            preprocessor = Preprocessor(config)
+            preprocessor = get_preprocessor(config)
             df = preprocessor.run()
 
             self.logger.info("Step 2: Building sequences (with timestamps)...")
