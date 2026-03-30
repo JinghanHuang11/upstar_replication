@@ -383,6 +383,12 @@ def run_cross_validation(
     # Set seed
     set_seed(config.get('seed', 42))
 
+    # Re-initialize logger with file output (must be before any logger usage)
+    if output_dir is None:
+        output_dir = Path(config['logging']['checkpoint_dir']).parent.parent / 'cross_validation'
+    else:
+        output_dir = Path(output_dir)
+
     # Quick test overrides
     if quick_test:
         config['training']['max_epochs'] = 3
@@ -393,22 +399,6 @@ def run_cross_validation(
     if num_folds is None:
         num_folds = config['dataset'].get('num_folds', 10)
     logger.info(f"Running {num_folds}-fold cross-validation")
-
-    # Setup logging
-    if output_dir is None:
-        output_dir = Path(config['logging']['checkpoint_dir']).parent.parent / 'cross_validation'
-    else:
-        output_dir = Path(output_dir)
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    log_dir = output_dir / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'cv.log'
-
-    global logger
-    logger = get_logger(__name__, str(log_file))
 
     logger.info("=" * 80)
     logger.info("Baseline 10-Fold Cross-Validation Training")
