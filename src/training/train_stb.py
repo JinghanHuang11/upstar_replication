@@ -229,9 +229,9 @@ def compute_stb_scores_paper_aligned(
     # Compute STB scores with MI-based worst-case aggregation
     logger.info("Step 4: Computing STB scores (MI-based, worst-case aggregation)...")
     stb_scores = scorer.compute_stability_score(
-        original_repr.cpu(),
+        original_repr,
         all_perturbed_repr,
-        graph_summary.cpu()
+        graph_summary
     )
 
     logger.info(f"STB scores computed:")
