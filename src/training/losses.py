@@ -108,6 +108,47 @@ class UPSTARLoss(nn.Module):
         logger.info(f"  L_distill:   {use_distillation_loss}")
         logger.info("=" * 60)
 
+    def set_stage(self, stage_idx: int):
+        """
+        Set training stage for staged curriculum learning.
+
+        This is an ENGINEERING implementation choice, NOT a paper modification.
+        The final model (after all 4 stages) still optimizes the paper's joint loss.
+
+        Args:
+            stage_idx: stage index (1-4)
+                - Stage 1: L_global only
+                - Stage 2: L_global + L_S&E&O
+                - Stage 3: + L_orth
+                - Stage 4: + L_distill
+        """
+        if stage_idx == 1:
+            self.use_global_loss = True
+            self.use_branch_loss = False
+            self.use_orthogonality_loss = False
+            self.use_distillation_loss = False
+        elif stage_idx == 2:
+            self.use_global_loss = True
+            self.use_branch_loss = True
+            self.use_orthogonality_loss = False
+            self.use_distillation_loss = False
+        elif stage_idx == 3:
+            self.use_global_loss = True
+            self.use_branch_loss = True
+            self.use_orthogonality_loss = True
+            self.use_distillation_loss = False
+        elif stage_idx == 4:
+            self.use_global_loss = True
+            self.use_branch_loss = True
+            self.use_orthogonality_loss = True
+            self.use_distillation_loss = True
+        else:
+            raise ValueError(f"Invalid stage_idx: {stage_idx}. Must be 1-4.")
+
+        logger.info(f"Set training stage: {stage_idx}")
+        logger.info(f"  Active losses: global={self.use_global_loss}, branch={self.use_branch_loss}, "
+                   f"orthogonality={self.use_orthogonality_loss}, distillation={self.use_distillation_loss}")
+
     def compute_global_loss(
         self,
         y_hat_global: torch.Tensor,

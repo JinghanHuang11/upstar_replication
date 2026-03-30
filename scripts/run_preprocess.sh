@@ -122,7 +122,7 @@ print("  Required for: day-level item-time graph (Module 1)")
 print("\nNext steps:")
 print("  1. Item Representations: bash scripts/run_item_repr.sh")
 print("  2. STB Calculation: bash scripts/run_stb.sh")
-print("  3. Baseline Training: bash scripts/run_tafeng_baseline.sh single")
+print("  3. Baseline Training: bash scripts/run_tafeng_baseline.sh")
 print("  4. UPSTAR Training: bash scripts/run_tafeng_upstar.sh")
 
 print("\n⚠️  IMPORTANT:")

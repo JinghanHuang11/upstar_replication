@@ -1,7 +1,14 @@
 """
-Cross-Validation for Baseline Model
+10-Fold Cross-Validation Training for LSTM Baseline
 
-User-level 10-fold cross-validation for baseline LSTM.
+This is the ONLY training entry point for baseline model.
+Implements clean, unified cv10 training with internal validation split.
+
+Paper-Aligned:
+- User-level 10-fold cross-validation
+- Each user's FULL sequence used in their assigned fold
+- Internal validation split from training data for early stopping
+- Final evaluation on held-out test fold
 """
 
 import argparse
@@ -14,13 +21,13 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 import logging
-import sys
 import json
+import sys
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.models.baseline_lstm import BaselineLSTM
-from src.data.dataset import get_dataloader
+from src.models.baseline_lstm import LSTMRec
+from src.data.dataloader import get_dataloader
 from src.evaluation.metrics import compute_all_metrics
 from src.utils.seed import set_seed
 from src.utils.logger import get_logger
@@ -29,71 +36,192 @@ logger = get_logger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Baseline 10-Fold CV Training')
     parser.add_argument('--config', type=str, default='configs/tafeng_baseline.yaml')
-    parser.add_argument('--num_folds', type=int, default=10)
-    parser.add_argument('--output_dir', type=str, default=None)
+    parser.add_argument('--output-dir', type=str, default=None)
+    parser.add_argument('--num-folds', type=int, default=None,
+                       help='Number of folds for cross-validation (default: 10 from config, use 1 for quick test)')
+    parser.add_argument('--quick-test', action='store_true',
+                       help='Quick test mode: 1 fold, 3 epochs, small dataset')
     return parser.parse_args()
 
 
-def create_folds(all_sequences, num_folds=10, random_seed=42):
-    """Create 10 folds of users"""
-    set_seed(random_seed)
+def split_train_val(
+    train_sequences: dict,
+    val_ratio: float = 0.1,
+    random_seed: int = 42
+) -> tuple:
+    """
+    Split training sequences into train and internal validation sets.
 
-    # Get all user indices
-    user_indices = list(all_sequences.keys())
+    Strategy: User-level split (randomly sample users for validation)
+    - Ensures no data leakage between train/val
+    - Simple and stable for early stopping
 
-    # Shuffle
-    np.random.shuffle(user_indices)
+    Args:
+        train_sequences: training sequences for this fold
+        val_ratio: fraction of users to use for validation
+        random_seed: random seed for reproducibility
 
-    # Split into folds
-    num_users = len(user_indices)
-    fold_size = num_users // num_folds
+    Returns:
+        train_sequences_split, val_sequences_split
+    """
+    np.random.seed(random_seed)
 
-    folds = []
-    for i in range(num_folds):
-        start_idx = i * fold_size
-        end_idx = start_idx + fold_size if i < num_folds - 1 else num_users
-        fold_users = user_indices[start_idx:end_idx]
-        folds.append(fold_users)
+    user_ids = list(train_sequences.keys())
+    np.random.shuffle(user_ids)
 
-    logger.info(f"Created {num_folds} folds:")
-    for i, fold in enumerate(folds):
-        logger.info(f"  Fold {i + 1}: {len(fold)} users")
+    num_val = int(len(user_ids) * val_ratio)
+    val_user_ids = user_ids[:num_val]
+    train_user_ids = user_ids[num_val:]
 
-    return folds
+    train_split = {uid: train_sequences[uid] for uid in train_user_ids}
+    val_split = {uid: train_sequences[uid] for uid in val_user_ids}
+
+    logger.info(f"Internal validation split: {len(train_split)} train, {len(val_split)} val users")
+
+    return train_split, val_split
 
 
-def get_fold_data(fold_idx, folds, all_sequences):
-    """Get train and test data for a fold"""
-    # Test users
-    test_users = folds[fold_idx]
+def train_epoch(
+    model: nn.Module,
+    train_loader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    epoch: int
+) -> float:
+    """Train for one epoch"""
+    model.train()
 
-    # Train users (all other folds)
-    train_users = []
-    for i, fold in enumerate(folds):
-        if i != fold_idx:
-            train_users.extend(fold)
+    total_loss = 0.0
+    num_batches = 0
 
-    # Create sequence dicts
-    train_sequences = {uid: all_sequences[uid] for uid in train_users}
-    test_sequences = {uid: all_sequences[uid] for uid in test_users}
+    progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}")
 
-    logger.info(f"Fold {fold_idx + 1}: Train={len(train_sequences)}, Test={len(test_sequences)}")
+    for batch in progress_bar:
+        # **UNIFIED BATCH FORMAT**: items, seq_length, target
+        items = batch['items'].to(device)
+        seq_lengths = batch['seq_length'].to(device)
+        targets = batch['target'].to(device)
 
-    return train_sequences, test_sequences
+        # Forward pass
+        logits = model(items, seq_lengths)
+
+        # Compute loss
+        loss = criterion(logits, targets)
+
+        # Backward pass
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+
+        optimizer.step()
+
+        # Update metrics
+        total_loss += loss.item()
+        num_batches += 1
+
+        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+
+    avg_loss = total_loss / num_batches
+    return avg_loss
+
+
+def evaluate(
+    model: nn.Module,
+    data_loader,
+    device: torch.device,
+    k_values: list
+) -> dict:
+    """Evaluate model"""
+    model.eval()
+
+    all_predictions = []
+    all_targets = []
+
+    with torch.no_grad():
+        for batch in tqdm(data_loader, desc="Evaluating"):
+            # **UNIFIED BATCH FORMAT**: items, seq_length, target
+            items = batch['items'].to(device)
+            seq_lengths = batch['seq_length'].to(device)
+            targets = batch['target'].to(device)
+
+            # Forward pass
+            logits = model(items, seq_lengths)
+
+            # Collect predictions and targets
+            all_predictions.append(logits.cpu())
+            all_targets.append(targets.cpu())
+
+    # Concatenate all
+    all_predictions = torch.cat(all_predictions, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
+
+    # Compute metrics
+    metrics = compute_all_metrics(all_predictions, all_targets, k_values)
+
+    return metrics
+
+
+def save_checkpoint(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    epoch: int,
+    metrics: dict,
+    save_path: Path,
+    is_best: bool = False
+):
+    """Save model checkpoint"""
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'metrics': metrics
+    }
+
+    # Save checkpoint
+    checkpoint_path = save_path / f'checkpoint_epoch_{epoch}.pt'
+    torch.save(checkpoint, checkpoint_path)
+
+    # Save best model
+    if is_best:
+        best_path = save_path / 'best_model.pt'
+        torch.save(checkpoint, best_path)
+        logger.info(f"Saved best model to {best_path}")
 
 
 def train_fold(
-    fold_idx,
-    train_sequences,
-    val_sequences,
-    test_sequences,
-    config,
-    device,
-    output_dir
-):
-    """Train a single fold"""
+    fold_idx: int,
+    train_sequences: dict,
+    test_sequences: dict,
+    config: dict,
+    device: torch.device,
+    output_dir: Path,
+    quick_test: bool = False
+) -> dict:
+    """
+    Train a single fold with internal validation split.
+
+    Workflow:
+    1. Split train_sequences into train + internal validation
+    2. Train on train split, early stop on val split
+    3. Load best model and evaluate on test split
+
+    Args:
+        fold_idx: fold index (0-9)
+        train_sequences: training sequences for this fold
+        test_sequences: test sequences for this fold
+        config: configuration dict
+        device: device to use
+        output_dir: directory to save results
+        quick_test: if True, use minimal epochs
+
+    Returns:
+        test_metrics: final test metrics
+    """
     logger.info(f"\n{'=' * 80}")
     logger.info(f"Training Fold {fold_idx + 1}")
     logger.info(f"{'=' * 80}")
@@ -105,39 +233,57 @@ def train_fold(
 
     num_items = metadata['num_items']
 
+    # **INTERNAL VALIDATION SPLIT**: Split train into train + val
+    val_ratio = config['training'].get('val_ratio', 0.1)
+    val_random_seed = config['training'].get('val_random_seed', 42)
+    train_split, val_split = split_train_val(
+        train_sequences,
+        val_ratio=val_ratio,
+        random_seed=val_random_seed + fold_idx  # Different seed per fold
+    )
+
     # Create dataloaders
-    max_seq_length = config['model'].get('max_seq_length', 50)
+    max_seq_length = config['model']['max_seq_length']
     batch_size = config['training']['batch_size']
+    num_workers = config['training'].get('num_workers', 0)
 
     train_loader = get_dataloader(
-        config, 'train',
+        sequences=train_split,
+        max_seq_length=max_seq_length,
         batch_size=batch_size,
-        num_workers=0
+        split='train',
+        num_workers=num_workers
     )
 
     val_loader = get_dataloader(
-        config, 'val',
+        sequences=val_split,
+        max_seq_length=max_seq_length,
         batch_size=batch_size,
-        num_workers=0
+        split='val',
+        num_workers=num_workers
     )
 
     test_loader = get_dataloader(
-        config, 'test',
+        sequences=test_sequences,
+        max_seq_length=max_seq_length,
         batch_size=batch_size,
-        num_workers=0
+        split='test',
+        num_workers=num_workers
     )
 
     # Create model
-    model = BaselineLSTM(
-        vocab_size=num_items,
+    model = LSTMRec(
+        num_items=num_items,
         embed_dim=config['model']['embed_dim'],
         hidden_dim=config['model']['hidden_dim'],
         num_layers=config['model']['num_layers'],
         dropout=config['model']['dropout']
     ).to(device)
 
+    logger.info(f"Fold {fold_idx + 1} Model: {sum(p.numel() for p in model.parameters()):,} parameters")
+
     # Loss and optimizer
-    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(
         model.parameters(),
         lr=config['training']['learning_rate'],
@@ -157,128 +303,79 @@ def train_fold(
 
     for epoch in range(max_epochs):
         # Train
-        model.train()
-        train_loss = 0.0
-        num_batches = 0
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, epoch + 1)
+        logger.info(f"Fold {fold_idx + 1} - Epoch {epoch + 1}/{max_epochs}: Train loss = {train_loss:.4f}")
 
-        for batch in train_loader:
-            input_items = batch['input_items'].to(device)
-            seq_length = batch['seq_length'].to(device)
-            target_item = batch['target_item'].to(device)
-
-            optimizer.zero_grad()
-
-            # Forward
-            logits = model(input_items, seq_length)
-
-            # Loss
-            loss = criterion(logits, target_item)
-
-            # Backward
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            optimizer.step()
-
-            train_loss += loss.item()
-            num_batches += 1
-
-        train_loss /= num_batches
-
-        # Validate
-        model.eval()
-        all_predictions = []
-        all_targets = []
-
-        with torch.no_grad():
-            for batch in val_loader:
-                input_items = batch['input_items'].to(device)
-                seq_length = batch['seq_length'].to(device)
-                target_item = batch['target_item'].to(device)
-
-                logits = model(input_items, seq_length)
-                all_predictions.append(logits.cpu())
-                all_targets.append(target_item.cpu())
-
-        all_predictions = torch.cat(all_predictions, dim=0)
-        all_targets = torch.cat(all_targets, dim=0)
-
-        # Compute metrics
-        val_metrics = compute_all_metrics(
-            all_predictions, all_targets,
-            k_values=[5, 10, 20]
-        )
-
+        # Validate on internal validation set
+        val_metrics = evaluate(model, val_loader, device, config['evaluation']['k_values'])
         current_metric = val_metrics[metric_for_best]
 
-        # Log
-        logger.info(f"Epoch {epoch + 1}/{max_epochs}: "
-                   f"Loss={train_loss:.4f}, "
-                   f"NDCG@10={val_metrics['NDCG@10']:.4f}")
+        logger.info(f"Fold {fold_idx + 1} - Epoch {epoch + 1}: {metric_for_best} = {current_metric:.4f}")
 
         # Check if best
-        if current_metric > best_metric:
+        is_best = current_metric > best_metric
+        if is_best:
             best_metric = current_metric
             no_improve_count = 0
-
-            # Save best model
-            best_path = fold_output_dir / 'best_model.pt'
-            torch.save({
-                'fold': fold_idx,
-                'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'metrics': val_metrics
-            }, best_path)
+            logger.info(f"Fold {fold_idx + 1} - New best {metric_for_best}: {best_metric:.4f}")
         else:
             no_improve_count += 1
+            logger.info(f"Fold {fold_idx + 1} - No improvement for {no_improve_count} epochs")
 
+        # Save checkpoint
+        save_checkpoint(
+            model, optimizer, epoch + 1, val_metrics,
+            fold_output_dir, is_best
+        )
+
+        # Early stopping
         if no_improve_count >= patience:
-            logger.info(f"Early stopping at epoch {epoch + 1}")
+            logger.info(f"Fold {fold_idx + 1} - Early stopping at epoch {epoch + 1}")
             break
 
-    # Load best model and test
+    # Load best model and evaluate on test set
+    logger.info(f"\nFold {fold_idx + 1} - Evaluating best model on test set...")
     best_checkpoint = torch.load(fold_output_dir / 'best_model.pt', weights_only=False)
     model.load_state_dict(best_checkpoint['model_state_dict'])
 
-    model.eval()
-    all_predictions = []
-    all_targets = []
+    test_metrics = evaluate(model, test_loader, device, config['evaluation']['k_values'])
 
-    with torch.no_grad():
-        for batch in test_loader:
-            input_items = batch['input_items'].to(device)
-            seq_length = batch['seq_length'].to(device)
-            target_item = batch['target_item'].to(device)
-
-            logits = model(input_items, seq_length)
-            all_predictions.append(logits.cpu())
-            all_targets.append(target_item.cpu())
-
-    all_predictions = torch.cat(all_predictions, dim=0)
-    all_targets = torch.cat(all_targets, dim=0)
-
-    # Compute test metrics
-    test_metrics = compute_all_metrics(
-        all_predictions, all_targets,
-        k_values=[1, 5, 10, 15, 20, 50]
-    )
+    # Log test results
+    logger.info(f"\nFold {fold_idx + 1} Final Test Results:")
+    for metric in ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']:
+        if metric in test_metrics:
+            logger.info(f"  {metric}: {test_metrics[metric]:.4f}")
 
     # Save test metrics
     metrics_path = fold_output_dir / 'test_metrics.json'
     with open(metrics_path, 'w') as f:
-        json.dump({k: v * 100 for k, v in test_metrics.items()}, f, indent=2)
-
-    logger.info(f"Fold {fold_idx + 1} complete: NDCG@10={test_metrics['NDCG@10']:.4f}")
+        # Convert to percentage for saving
+        test_metrics_pct = {k: v * 100 for k, v in test_metrics.items()}
+        json.dump(test_metrics_pct, f, indent=2)
 
     return test_metrics
 
 
 def run_cross_validation(
     config_path: str,
-    num_folds: int = 10,
-    output_dir: str = None
-):
-    """Run 10-fold cross-validation"""
+    output_dir: str = None,
+    num_folds: int = None,
+    quick_test: bool = False
+) -> dict:
+    """
+    Run 10-fold cross-validation for baseline model.
+
+    This is the MAIN entry point for baseline training.
+
+    Args:
+        config_path: path to config file
+        output_dir: directory to save results
+        num_folds: number of folds (default: from config, use 1 for quick test)
+        quick_test: if True, use minimal epochs (3 instead of 20)
+
+    Returns:
+        cv_results: dict with mean and std for each metric
+    """
     # Load config
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -286,74 +383,18 @@ def run_cross_validation(
     # Set seed
     set_seed(config.get('seed', 42))
 
+    # Quick test overrides
+    if quick_test:
+        config['training']['max_epochs'] = 3
+        config['training']['early_stop_patience'] = 2
+        logger.info("Quick test mode: using 3 epochs")
+
+    # Use provided num_folds or config default
+    if num_folds is None:
+        num_folds = config['dataset'].get('num_folds', 10)
+    logger.info(f"Running {num_folds}-fold cross-validation")
+
     # Setup logging
-    log_dir = Path(output_dir) / 'logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / 'cv.log'
-
-    global logger
-    logger = get_logger(__name__, str(log_file))
-
-    logger.info("=" * 80)
-    logger.info("Baseline 10-Fold Cross-Validation")
-    logger.info("=" * 80)
-
-    # Device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Using device: {device}")
-
-    # Load data
-    processed_dir = Path(config['dataset']['processed_dir'])
-
-    # Check if CV splits already exist
-    cv_dir = processed_dir / 'cv_splits'
-    if cv_dir.exists() and (cv_dir / 'cv_metadata.pkl').exists():
-        # Load pre-computed CV splits
-        logger.info(f"Loading pre-computed CV splits from {cv_dir}")
-        with open(cv_dir / 'cv_metadata.pkl', 'rb') as f:
-            cv_metadata = pickle.load(f)
-
-        num_folds = cv_metadata['num_folds']
-        logger.info(f"Found {num_folds} pre-computed folds")
-
-        # Load all sequences from fold splits
-        train_folds = []
-        test_folds = []
-        for fold_idx in range(num_folds):
-            fold_dir = cv_dir / f'fold_{fold_idx + 1}'
-            with open(fold_dir / 'train_sequences.pkl', 'rb') as f:
-                train_folds.append(pickle.load(f))
-            with open(fold_dir / 'test_sequences.pkl', 'rb') as f:
-                test_folds.append(pickle.load(f))
-
-        # Create user lists from splits
-        all_sequences = {}
-        for fold_idx in range(num_folds):
-            all_sequences.update(train_folds[fold_idx])
-            all_sequences.update(test_folds[fold_idx])
-
-        # Reconstruct fold user lists
-        folds = []
-        for fold_idx in range(num_folds):
-            test_users = list(test_folds[fold_idx].keys())
-            folds.append(test_users)
-
-        logger.info(f"Loaded {len(all_sequences)} total users across {num_folds} folds")
-    else:
-        # Legacy mode: load from single train_sequences file and create folds
-        with open(processed_dir / 'train_sequences.pkl', 'rb') as f:
-            all_sequences = pickle.load(f)
-
-        logger.info(f"Loaded {len(all_sequences)} users for cross-validation")
-        logger.info("Creating folds on-the-fly (consider running preprocessor with split_method='10fold_cv')")
-
-        # Create folds
-        folds = create_folds(all_sequences, num_folds=num_folds, random_seed=42)
-
-    # Create folds
-    folds = create_folds(all_sequences, num_folds=num_folds, random_seed=42)
-
-    # Output directory
     if output_dir is None:
         output_dir = Path(config['logging']['checkpoint_dir']).parent.parent / 'cross_validation'
     else:
@@ -362,36 +403,82 @@ def run_cross_validation(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    log_dir = output_dir / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / 'cv.log'
+
+    global logger
+    logger = get_logger(__name__, str(log_file))
+
+    logger.info("=" * 80)
+    logger.info("Baseline 10-Fold Cross-Validation Training")
+    logger.info("=" * 80)
+    logger.info(f"Config: {config_path}")
+    logger.info(f"Output directory: {output_dir}")
+
+    # Device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    logger.info(f"Using device: {device}")
+
+    # Load CV splits (REQUIRED)
+    processed_dir = Path(config['dataset']['processed_dir'])
+    cv_dir = processed_dir / 'cv_splits'
+
+    if not cv_dir.exists():
+        raise FileNotFoundError(
+            f"CV splits not found: {cv_dir}\n"
+            f"Please run preprocessing first: bash scripts/run_preprocess_cv.sh"
+        )
+
+    if not (cv_dir / 'cv_metadata.pkl').exists():
+        raise FileNotFoundError(f"CV metadata not found: {cv_dir / 'cv_metadata.pkl'}")
+
+    # Load pre-computed CV splits
+    logger.info(f"Loading pre-computed CV splits from {cv_dir}")
+    with open(cv_dir / 'cv_metadata.pkl', 'rb') as f:
+        cv_metadata = pickle.load(f)
+
+    num_folds = cv_metadata['num_folds']
+    logger.info(f"Found {num_folds}-fold CV splits")
+
+    # Load all fold splits
+    cv_splits = []
+    for fold_idx in range(1, num_folds + 1):
+        fold_dir = cv_dir / f'fold_{fold_idx}'
+        with open(fold_dir / 'train_sequences.pkl', 'rb') as f:
+            train_sequences = pickle.load(f)
+        with open(fold_dir / 'test_sequences.pkl', 'rb') as f:
+            test_sequences = pickle.load(f)
+        cv_splits.append({
+            'train': train_sequences,
+            'test': test_sequences
+        })
+        logger.info(f"  Fold {fold_idx}: Train={len(train_sequences)}, Test={len(test_sequences)}")
+
     # Train and evaluate each fold
     all_fold_metrics = []
 
     for fold_idx in range(num_folds):
-        # For cross-validation, we use the full dataset
-        # Split into train/val/test within each fold
-        fold_users = folds[fold_idx]
-        other_users = []
-        for i, fold in enumerate(folds):
-            if i != fold_idx:
-                other_users.extend(fold)
+        train_sequences = cv_splits[fold_idx]['train']
+        test_sequences = cv_splits[fold_idx]['test']
 
-        # Create sequences
-        train_sequences = {uid: all_sequences[uid] for uid in other_users}
-        test_sequences = {uid: all_sequences[uid] for uid in fold_users}
-
-        # Train and test
         fold_metrics = train_fold(
             fold_idx,
             train_sequences,
-            {},  # No val set, use early stopping on train
             test_sequences,
             config,
             device,
-            output_dir
+            output_dir,
+            quick_test=quick_test
         )
 
         all_fold_metrics.append(fold_metrics)
 
     # Aggregate results
+    logger.info(f"\n{'=' * 80}")
+    logger.info("10-Fold CV Aggregate Results")
+    logger.info(f"{'=' * 80}")
+
     metric_names = all_fold_metrics[0].keys()
     cv_results = {}
 
@@ -402,13 +489,8 @@ def run_cross_validation(
             'std': np.std(values, ddof=1)
         }
 
-    # Print results
-    logger.info("\n" + "=" * 80)
-    logger.info("Cross-Validation Results")
-    logger.info("=" * 80)
-
+    # Print main metrics
     main_metrics = ['Precision@5', 'Precision@20', 'NDCG@5', 'NDCG@20', 'MRR@5', 'MRR@20']
-
     for metric in main_metrics:
         if metric in cv_results:
             mean_val = cv_results[metric]['mean']
@@ -417,8 +499,7 @@ def run_cross_validation(
 
     logger.info("=" * 80)
 
-    # Save results
-    import json
+    # Save aggregated results
     results_path = output_dir / 'cv_results.json'
     with open(results_path, 'w') as f:
         # Convert to percentage
@@ -430,7 +511,7 @@ def run_cross_validation(
             }
         json.dump(cv_results_pct, f, indent=2)
 
-    logger.info(f"\nSaved results to {results_path}")
+    logger.info(f"\nSaved CV results to {results_path}")
 
     # Save per-fold results
     fold_results_path = output_dir / 'per_fold_results.json'
@@ -448,4 +529,9 @@ def run_cross_validation(
 
 if __name__ == '__main__':
     args = parse_args()
-    run_cross_validation(args.config, args.num_folds, args.output_dir)
+    run_cross_validation(
+        args.config,
+        args.output_dir,
+        num_folds=args.num_folds,
+        quick_test=args.quick_test
+    )

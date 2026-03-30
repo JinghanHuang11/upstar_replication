@@ -14,20 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class SequenceBuilder:
-    """Build user sequences and split dataset"""
+    """Build user sequences and split dataset (cv10 mode only)"""
 
     def __init__(self, config: Dict):
         self.config = config
         self.processed_dir = Path(config['dataset']['processed_dir'])
 
-        # Split strategy: 'leave_one_out' (default) or 'cv10' (10-fold CV)
-        self.split_method = config['dataset'].get('split_method', 'leave_one_out')
+        # Split strategy: ONLY 'cv10' (10-fold CV) supported
+        # Paper-aligned: User-level 10-fold cross-validation
+        self.split_method = 'cv10'
 
-        # Normalize split_method: support both '10fold_cv' and 'cv10'
-        if self.split_method == '10fold_cv':
-            self.split_method = 'cv10'
-
-        self.split_ratio = config['dataset'].get('split_ratio', [0.8, 0.1, 0.1])
+        # CV parameters
+        self.num_folds = config['dataset'].get('num_folds', 10)
+        self.random_seed = config['dataset'].get('cv_random_seed', 42)
 
     def build_user_sequences(self, df: pd.DataFrame) -> Dict[int, List[Tuple[int, int]]]:
         """
@@ -64,141 +63,14 @@ class SequenceBuilder:
 
         return dict(user_sequences)
 
-    def split_leave_one_out(
+
+
+    def split_cv10(
         self,
         user_sequences: Dict[int, List[Tuple[int, int]]]
-    ) -> Tuple[Dict, Dict, Dict]:
-        """
-        Leave-one-out split (engineering mode):
-        - Train: all items except last two
-        - Val: second to last item
-        - Test: last item
-
-        **PAPER-ALIGNED OUTPUT FORMAT**:
-        - 'items': [(item, timestamp), ...] with timestamps preserved
-        - 'target': item_id only (no timestamp needed for prediction target)
-        - Timestamps in 'items' are required for Phase 2/3
-
-        Args:
-            user_sequences: {user_idx: [(item, timestamp), ...]}
-
-        Returns:
-            train_sequences, val_sequences, test_sequences
-            Each items field is a list of (item, timestamp) tuples (paper-aligned).
-            Each target field is a single item_id (prediction target).
-        """
-        logger.info("Splitting with leave-one-out strategy...")
-
-        train_sequences = {}
-        val_sequences = {}
-        test_sequences = {}
-
-        for user_idx, seq in user_sequences.items():
-            if len(seq) < 3:
-                # Need at least 3 items for train/val/test
-                continue
-
-            # Extract items only (not timestamps) for target
-            # PAPER-ALIGNED: target is item_id only (prediction target doesn't need timestamp)
-            all_items = [item for item, _ in seq]
-            all_items_timestamps = seq  # Keep (item, timestamp) tuples for 'items' field
-
-            # For training: use items[:-2] as input, items[-2] as target
-            train_sequences[user_idx] = {
-                'items': all_items_timestamps[:-2],  # PAPER-ALIGNED: with timestamps
-                'target': all_items[-2]               # item_id only
-            }
-
-            # For validation: use items[:-1] as input, items[-1] as target
-            val_sequences[user_idx] = {
-                'items': all_items_timestamps[:-1],  # PAPER-ALIGNED: with timestamps
-                'target': all_items[-1]               # item_id only
-            }
-
-            # For testing: use items[:-1] as input, last item as target
-            test_sequences[user_idx] = {
-                'items': all_items_timestamps[:-1],  # PAPER-ALIGNED: with timestamps
-                'target': all_items[-1]               # item_id only
-            }
-
-        logger.info(f"Train: {len(train_sequences)} users")
-        logger.info(f"Val: {len(val_sequences)} users")
-        logger.info(f"Test: {len(test_sequences)} users")
-
-        return train_sequences, val_sequences, test_sequences
-
-    def split_ratio(
-        self,
-        user_sequences: Dict[int, List[Tuple[int, int]]]
-    ) -> Tuple[Dict, Dict, Dict]:
-        """
-        Ratio-based split (engineering fallback mode):
-        - Train: first split_ratio[0] of each user's sequence
-        - Val: next split_ratio[1]
-        - Test: last split_ratio[2]
-
-        **PAPER-ALIGNED OUTPUT FORMAT**: Same as leave_one_out
-        - 'items': [(item, timestamp), ...] with timestamps preserved
-        - 'target': item_id only
-
-        Args:
-            user_sequences: {user_idx: [(item, timestamp), ...]}
-
-        Returns:
-            train_sequences, val_sequences, test_sequences
-            Each items field is a list of (item, timestamp) tuples (paper-aligned).
-            Each target field is a single item_id (prediction target).
-        """
-        logger.info(f"Splitting with ratio {self.split_ratio}...")
-
-        train_sequences = {}
-        val_sequences = {}
-        test_sequences = {}
-
-        for user_idx, seq in user_sequences.items():
-            n = len(seq)
-
-            train_end = int(n * self.split_ratio[0])
-            val_end = train_end + int(n * self.split_ratio[1])
-
-            # Extract items for targets
-            all_items = [item for item, _ in seq]
-
-            # Train
-            if train_end > 0:
-                train_sequences[user_idx] = {
-                    'items': seq[:train_end],
-                    'target': all_items[train_end] if train_end < n else None
-                }
-
-            # Val
-            if val_end > train_end and val_end < n:
-                val_sequences[user_idx] = {
-                    'items': seq[:val_end],
-                    'target': all_items[val_end]
-                }
-
-            # Test
-            if n > val_end:
-                test_sequences[user_idx] = {
-                    'items': seq[:n-1],
-                    'target': all_items[n-1]
-                }
-
-        logger.info(f"Train: {len(train_sequences)} users")
-        logger.info(f"Val: {len(val_sequences)} users")
-        logger.info(f"Test: {len(test_sequences)} users")
-
-        return train_sequences, val_sequences, test_sequences
-
-    def split_10fold_cv(
-        self,
-        user_sequences: Dict[int, List[Tuple[int, int]]],
-        num_folds: int = 10,
-        random_seed: int = 42
     ) -> Tuple[List[Dict], List[Dict]]:
         """
-        10-Fold Cross-Validation split (user-level, paper-aligned mode)
+        10-Fold Cross-Validation split (ONLY mode supported)
 
         Strategy:
         1. Shuffle all users randomly
@@ -209,12 +81,9 @@ class SequenceBuilder:
         **PAPER-ALIGNED OUTPUT FORMAT**:
         - 'items': [(item, timestamp), ...] with timestamps preserved
         - 'target': item_id only (last item in sequence)
-        - Same format as leave_one_out for consistency
 
         Args:
             user_sequences: {user_idx: [(item, timestamp), ...]}
-            num_folds: number of folds (default 10)
-            random_seed: random seed for reproducibility
 
         Returns:
             train_sequences_list: list of 10 train dicts (one per fold)
@@ -222,6 +91,9 @@ class SequenceBuilder:
             Each dict: {user_idx: {'items': [(item, timestamp), ...], 'target': last_item}}
         """
         import numpy as np
+
+        num_folds = self.num_folds
+        random_seed = self.random_seed
 
         logger.info(f"Splitting with {num_folds}-fold cross-validation (user-level)...")
 
@@ -297,109 +169,69 @@ class SequenceBuilder:
 
     def save_sequences(
         self,
-        train_sequences: Dict,
-        val_sequences: Dict = None,
-        test_sequences: Dict = None,
-        train_sequences_list: List[Dict] = None,
-        test_sequences_list: List[Dict] = None
+        train_sequences_list: List[Dict],
+        test_sequences_list: List[Dict]
     ):
         """
-        Save sequences to disk
+        Save CV10 sequences to disk (ONLY mode supported)
 
         Args:
-            train_sequences: single train split (for leave-one-out or ratio split)
-            val_sequences: single val split (optional)
-            test_sequences: single test split (optional)
             train_sequences_list: list of train splits (for CV, one per fold)
             test_sequences_list: list of test splits (for CV, one per fold)
         """
         logger.info("Saving sequences...")
 
-        # Handle CV mode: save all folds
-        if train_sequences_list is not None and test_sequences_list is not None:
-            num_folds = len(train_sequences_list)
-            logger.info(f"Saving {num_folds}-fold cross-validation splits...")
+        # CV mode: save all folds
+        num_folds = len(train_sequences_list)
+        logger.info(f"Saving {num_folds}-fold cross-validation splits...")
 
-            cv_dir = self.processed_dir / 'cv_splits'
-            cv_dir.mkdir(parents=True, exist_ok=True)
+        cv_dir = self.processed_dir / 'cv_splits'
+        cv_dir.mkdir(parents=True, exist_ok=True)
 
-            for fold_idx in range(num_folds):
-                fold_dir = cv_dir / f'fold_{fold_idx + 1}'
-                fold_dir.mkdir(parents=True, exist_ok=True)
+        for fold_idx in range(num_folds):
+            fold_dir = cv_dir / f'fold_{fold_idx + 1}'
+            fold_dir.mkdir(parents=True, exist_ok=True)
 
-                with open(fold_dir / 'train_sequences.pkl', 'wb') as f:
-                    pickle.dump(train_sequences_list[fold_idx], f)
+            with open(fold_dir / 'train_sequences.pkl', 'wb') as f:
+                pickle.dump(train_sequences_list[fold_idx], f)
 
-                with open(fold_dir / 'test_sequences.pkl', 'wb') as f:
-                    pickle.dump(test_sequences_list[fold_idx], f)
+            with open(fold_dir / 'test_sequences.pkl', 'wb') as f:
+                pickle.dump(test_sequences_list[fold_idx], f)
 
-            # Also save metadata about CV split
-            # **CONSUMERS**: Phase 1/4 CV training scripts need num_folds and fold sizes
-            cv_metadata = {
-                # ===== EXISTING FIELDS (backward compatible) =====
-                'num_folds': num_folds,
-                'split_method': 'cv10',  # Normalized from '10fold_cv'
-                'folds': [{'train_size': len(train_sequences_list[i]),
-                          'test_size': len(test_sequences_list[i])}
-                         for i in range(num_folds)],
+        # Save CV metadata
+        # **CONSUMERS**: Phase 1/4 CV training scripts need num_folds and fold sizes
+        cv_metadata = {
+            'num_folds': num_folds,
+            'split_method': 'cv10',
+            'folds': [{'train_size': len(train_sequences_list[i]),
+                      'test_size': len(test_sequences_list[i])}
+                     for i in range(num_folds)],
+            'random_seed': self.random_seed,  # Fixed: use instance variable
+            'total_users': sum(len(s) for s in train_sequences_list) + len(test_sequences_list[0]),
+            'version': '1.1',
+        }
+        with open(cv_dir / 'cv_metadata.pkl', 'wb') as f:
+            pickle.dump(cv_metadata, f)
 
-                # ===== NEW FIELDS (Phase 0 enhanced) =====
-                'random_seed': random_seed,  # Reproducibility
-                'total_users': sum(len(s) for s in train_sequences_list) + len(test_sequences_list[0]),
-                'version': '1.1',  # CV metadata format version
-            }
-            with open(cv_dir / 'cv_metadata.pkl', 'wb') as f:
-                pickle.dump(cv_metadata, f)
-
-            logger.info(f"Saved CV splits to {cv_dir}")
-
-        # Handle single split mode (leave-one-out or ratio)
-        else:
-            with open(self.processed_dir / 'train_sequences.pkl', 'wb') as f:
-                pickle.dump(train_sequences, f)
-
-            if val_sequences is not None:
-                with open(self.processed_dir / 'val_sequences.pkl', 'wb') as f:
-                    pickle.dump(val_sequences, f)
-
-            if test_sequences is not None:
-                with open(self.processed_dir / 'test_sequences.pkl', 'wb') as f:
-                    pickle.dump(test_sequences, f)
-
-            logger.info(f"Saved sequences to {self.processed_dir}")
+        logger.info(f"Saved CV splits to {cv_dir}")
 
     def run(self, df: pd.DataFrame):
-        """Run sequence building and splitting"""
+        """Run sequence building and splitting (cv10 mode only)"""
         logger.info("=" * 60)
-        logger.info("Building sequences and splitting dataset")
+        logger.info("Building sequences and splitting dataset (10-fold CV)")
         logger.info("=" * 60)
 
         # Build sequences
         user_sequences = self.build_user_sequences(df)
 
-        # Split based on method
-        if self.split_method == 'cv10':
-            # 10-fold cross-validation (paper-aligned mode)
-            num_folds = self.config['dataset'].get('num_folds', 10)
-            random_seed = self.config['dataset'].get('cv_random_seed', 42)
-            train_sequences_list, test_sequences_list = self.split_10fold_cv(
-                user_sequences,
-                num_folds=num_folds,
-                random_seed=random_seed
-            )
-            # Save CV splits
-            self.save_sequences(
-                train_sequences_list=train_sequences_list,
-                test_sequences_list=test_sequences_list
-            )
-        elif self.split_method == 'leave_one_out':
-            # Leave-one-out split (default/engineering mode)
-            train_sequences, val_sequences, test_sequences = self.split_leave_one_out(user_sequences)
-            self.save_sequences(train_sequences, val_sequences, test_sequences)
-        else:
-            # Ratio-based split (fallback)
-            train_sequences, val_sequences, test_sequences = self.split_ratio(user_sequences)
-            self.save_sequences(train_sequences, val_sequences, test_sequences)
+        # Split using cv10 (ONLY mode supported)
+        train_sequences_list, test_sequences_list = self.split_cv10(user_sequences)
+
+        # Save CV splits
+        self.save_sequences(
+            train_sequences_list=train_sequences_list,
+            test_sequences_list=test_sequences_list
+        )
 
         logger.info("Sequence building complete!")
         logger.info("=" * 60)
@@ -410,7 +242,7 @@ if __name__ == '__main__':
     import sys
 
     # Load config
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'configs/baseline.yaml'
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'configs/tafeng_baseline.yaml'
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 

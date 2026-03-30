@@ -43,6 +43,9 @@ dataset:
   processed_dir: data/processed/tafeng/
   min_item_frequency: 2
   cache_dir: data/cache/tafeng/
+  split_method: 'cv10'  # ONLY mode supported: 10-fold cross-validation (paper-aligned)
+  num_folds: 10
+  cv_random_seed: 42  # For reproducible user shuffling
 
 # ─────────────────────────────────────────────────────────────────────────
 # Model (Section 7.3)
@@ -71,7 +74,11 @@ training:
   # ── Early stopping ──────────────────────────────────────────────────
   max_epochs_per_stage: 10  # [ENG]
   early_stop_patience: 3    # [ENG]
-  metric_for_best: 'NDCG@10'  # [ENG] paper main table uses NDCG@20
+  metric_for_best: 'NDCG@20'  # [PAPER] main table metric
+
+  # ── Internal validation split (for early stopping within each fold) ─────
+  val_ratio: 0.1  # 10% of training users for internal validation
+  val_random_seed: 42  # Random seed for validation split
 
   # ── Loss weights ────────────────────────────────────────────────────
   # L_total = λ_global*L_global + λ_branch*L_S&E&O + λ_ortho*L_orth + λ_distill*L_distill

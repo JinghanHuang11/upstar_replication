@@ -207,8 +207,11 @@ class UPSTAREvaluator:
         all_predictions = torch.cat(all_predictions, dim=0)
         all_targets = torch.cat(all_targets, dim=0)
 
-        # Compute all metrics
-        all_metrics = compute_all_metrics(all_predictions, all_targets, k_values=k_values)
+        # Compute all metrics with padding exclusion (RECOMMENDED)
+        all_metrics = compute_all_metrics(
+            all_predictions, all_targets, k_values=k_values,
+            exclude_padding=True, padding_idx=0
+        )
 
         # Split into main (paper) vs additional (engineering)
         main_metrics = {k: v for k, v in all_metrics.items() if k in PAPER_MAIN_METRICS}

@@ -319,10 +319,13 @@ class ItemGNN(nn.Module):
 
     def get_item_embeddings(self) -> torch.Tensor:
         """
-        Get current item embeddings
+        Get current item embeddings (ORIGINAL EMBEDDING TABLE - NOT GRAPH ENHANCED)
+
+        ⚠️ WARNING: This returns the pre-GNN embedding table weights.
+        For graph-enhanced embeddings, use get_final_item_embeddings() instead.
 
         Returns:
-            embeddings: [num_items, embed_dim]
+            embeddings: [num_items, embed_dim] - ORIGINAL embedding table (not graph-enhanced)
         """
         if self.item_embedding is not None:
             return self.item_embedding.weight.detach()
@@ -331,6 +334,35 @@ class ItemGNN(nn.Module):
             "get_item_embeddings() is not available in feature mode. "
             "Call forward(edge_index) and cache the result instead."
         )
+
+    def get_final_item_embeddings(
+        self,
+        edge_index: torch.Tensor,
+        edge_weight: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Get FINAL item embeddings AFTER GNN message passing (GRAPH-ENHANCED).
+
+        This is the RECOMMENDED method for getting item representations that
+        include graph structural information through GNN propagation.
+
+        Args:
+            edge_index: [2, num_edges] - graph structure
+            edge_weight: [num_edges] - optional edge weights
+
+        Returns:
+            final_embeddings: [num_items, embed_dim] - GRAPH-ENHANCED embeddings
+
+        Example:
+            >>> model = ItemGNN(num_items=1000, embed_dim=128)
+            >>> final_embeddings = model.get_final_item_embeddings(edge_index, edge_weight)
+            >>> # Use these for STB / UPSTAR
+        """
+        with torch.no_grad():
+            # Forward pass: includes GNN message passing
+            final_embeddings = self.forward(edge_index, edge_weight)
+
+        return final_embeddings.detach()
 
     def predict_links(
         self,

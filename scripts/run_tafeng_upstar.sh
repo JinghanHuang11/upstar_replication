@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run UPSTAR Experiment on Ta-Feng Dataset
+# Run UPSTAR Experiment on Ta-Feng Dataset (CV10-ONLY)
 #
 # Paper-Aligned Version (2026-03-25):
 #   - 4-layer LSTM (hidden_dim=128, Section 7.3)
@@ -8,22 +8,19 @@
 #   - All hyperparameters aligned with Section 7
 #
 # Usage:
-#   bash scripts/run_tafeng_upstar.sh single    # Single evaluation
-#   bash scripts/run_tafeng_upstar.sh cv        # 10-fold cross-validation
+#   bash scripts/run_tafeng_upstar.sh [config]
 
 set -e
 
 echo "============================================================"
-echo "UPSTAR Experiment on Ta-Feng Dataset"
+echo "UPSTAR Experiment on Ta-Feng Dataset (10-Fold CV)"
 echo "Paper-Aligned: Dual Teacher-Student (Section 3.3)"
 echo "============================================================"
 
-MODE="${1:-single}"
-CONFIG="${2:-configs/tafeng_upstar.yaml}"
+CONFIG="${1:-configs/tafeng_upstar.yaml}"
 
 echo ""
 echo "Configuration:"
-echo "  Mode: $MODE"
 echo "  Config: $CONFIG"
 echo ""
 
@@ -78,18 +75,8 @@ echo ""
 echo "All prerequisites satisfied!"
 echo ""
 
-# Create output directories
-OUTPUT_BASE="outputs/phase4_upstar"
-if [ "$MODE" = "single" ]; then
-    OUTPUT_DIR="$OUTPUT_BASE/single_run"
-    echo "Running single evaluation..."
-    echo "Output directory: $OUTPUT_DIR"
-else
-    OUTPUT_DIR="$OUTPUT_BASE/cross_validation"
-    echo "Running 10-fold cross-validation..."
-    echo "Output directory: $OUTPUT_DIR"
-fi
-
+# Create output directory
+OUTPUT_DIR="outputs/phase4_upstar"
 mkdir -p "$OUTPUT_DIR/checkpoints"
 mkdir -p "$OUTPUT_DIR/logs"
 mkdir -p "$OUTPUT_DIR/results"
@@ -112,108 +99,24 @@ print(f'  Tau_e: {training.get(\"tau_e\", \"N/A\")} (Paper: 0.5)')
 print('=' * 60)
 "
 
-# Run experiment
-if [ "$MODE" = "single" ]; then
-    # Single evaluation
-    echo ""
-    echo "Step 1: Training UPSTAR model (4 stages)..."
-    echo "------------------------------------------------------------"
-    echo "  Stage 1: Global loss"
-    echo "  Stage 2: Branch loss (S/E/O)"
-    echo "  Stage 3: Orthogonality loss"
-    echo "  Stage 4: Dual teacher-student loss"
-    echo ""
+echo ""
+echo "WARNING: 10-fold cross-validation will take significant time!"
+echo "  - Training 10 UPSTAR models (4 stages each)"
+echo "  - Each model: ~8-16 hours"
+echo "  - Total: ~80-160 hours"
+echo ""
+echo "Press Ctrl+C to cancel, or wait 5 seconds to start..."
+sleep 5
 
-    python src/training/train_upstar.py --config "$CONFIG"
+echo ""
+echo "Running 10-fold cross-validation..."
+echo "------------------------------------------------------------"
 
-    if [ $? -eq 0 ]; then
-        echo ""
-        echo "Step 2: Evaluating model..."
-        echo "------------------------------------------------------------"
-
-        # Find best model (after stage 4)
-        BEST_MODEL=$(find "$OUTPUT_DIR/checkpoints" -name "model_after_stage4.pt" -type f)
-
-        if [ -z "$BEST_MODEL" ]; then
-            # Fallback to best_model.pt
-            BEST_MODEL=$(find "$OUTPUT_DIR/checkpoints" -name "best_model.pt" -type f)
-        fi
-
-        if [ -z "$BEST_MODEL" ]; then
-            echo "ERROR: Trained model not found"
-            exit 1
-        fi
-
-        echo "Found model: $BEST_MODEL"
-
-        # Evaluate
-        python - <<PYTHON_SCRIPT
+python - <<PYTHON_SCRIPT
 import sys
 sys.path.append('.')
 
-from src.evaluation.evaluator import evaluate_from_checkpoint
-from src.evaluation.report import ReportGenerator
-
-# Evaluate
-metrics = evaluate_from_checkpoint(
-    checkpoint_path="$BEST_MODEL",
-    config_path="$CONFIG",
-    split="test",
-    k_values=[1, 5, 10, 15, 20, 50],
-    output_dir="$OUTPUT_DIR/results/"
-)
-
-# Generate reports
-generator = ReportGenerator(metrics)
-generator.save_all_formats("$OUTPUT_DIR/results/")
-
-# Save with model type label
-import json
-with open("$OUTPUT_DIR/results/main_results.json", 'r') as f:
-    data = json.load(f)
-data['model_type'] = 'upstar'
-data['dataset'] = 'tafeng'
-with open("$OUTPUT_DIR/results/main_results.json", 'w') as f:
-    json.dump(data, f, indent=2)
-
-print("\n" + "=" * 80)
-print("UPSTAR Experiment Complete!")
-print("=" * 80)
-print("\nResults saved to: $OUTPUT_DIR/results/")
-print("\nMain Results:")
-print(generator.generate_main_table(format='text'))
-
-print("\n✓ Paper-Aligned: All hyperparameters match Section 7")
-PYTHON_SCRIPT
-
-    else
-        echo ""
-        echo "============================================================"
-        echo "UPSTAR training failed! Check logs for details."
-        echo "============================================================"
-        exit 1
-    fi
-
-else
-    # Cross-validation
-    echo ""
-    echo "WARNING: 10-fold cross-validation will take significant time!"
-    echo "  - Training 10 UPSTAR models (4 stages each)"
-    echo "  - Each model: ~8-16 hours"
-    echo "  - Total: ~80-160 hours"
-    echo ""
-    echo "Press Ctrl+C to cancel, or wait 5 seconds to start..."
-    sleep 5
-
-    echo ""
-    echo "Running 10-fold cross-validation..."
-    echo "------------------------------------------------------------"
-
-    python - <<PYTHON_SCRIPT
-import sys
-sys.path.append('.')
-
-from src.evaluation.cross_validation import run_cross_validation
+from src.training.train_upstar_cv import run_cross_validation
 from src.evaluation.report import ReportGenerator
 
 # Run cross-validation
@@ -255,16 +158,15 @@ print(generator.generate_main_table(format='text'))
 print("\n✓ Paper-Aligned: 10-fold CV as per paper")
 PYTHON_SCRIPT
 
-    if [ $? -eq 0 ]; then
-        echo ""
-        echo "============================================================"
-        echo "Cross-validation successful!"
-        echo "============================================================"
-    else
-        echo ""
-        echo "============================================================"
-        echo "Cross-validation failed! Check logs for details."
-        echo "============================================================"
-        exit 1
-    fi
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "============================================================"
+    echo "Cross-validation successful!"
+    echo "============================================================"
+else
+    echo ""
+    echo "============================================================"
+    echo "Cross-validation failed! Check logs for details."
+    echo "============================================================"
+    exit 1
 fi

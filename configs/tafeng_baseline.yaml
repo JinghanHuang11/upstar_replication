@@ -11,9 +11,9 @@ dataset:
   processed_dir: data/processed/tafeng/
   cache_dir: data/cache/tafeng/
   min_item_frequency: 2   # Filter items appearing less than 2 times
-  split_method: 'leave_one_out'  # Options: 'leave_one_out' (default), 'cv10', 'ratio'
-                                # leave_one_out: last->test, second_last->val, others->train
-                                # cv10: 10-fold cross-validation (paper-aligned, use configs/tafeng_cv.yaml)
+  split_method: 'cv10'  # ONLY mode supported: 10-fold cross-validation (paper-aligned)
+  num_folds: 10
+  cv_random_seed: 42  # For reproducible user shuffling
 
 # Model Configuration
 model:
@@ -34,6 +34,10 @@ training:
   early_stop_patience: 5
   metric_for_best: 'NDCG@20'  # Paper-aligned: use NDCG@20 (main table metric)
   num_workers: 4
+
+  # Internal validation split (for early stopping within each fold)
+  val_ratio: 0.1  # 10% of training users for internal validation
+  val_random_seed: 42  # Random seed for validation split
 
 # Evaluation
 evaluation:

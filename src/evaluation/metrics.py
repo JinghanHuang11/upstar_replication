@@ -1,5 +1,10 @@
 """
-Evaluation metrics for sequential recommendation (Enhanced)
+Evaluation metrics for sequential recommendation (Unified with padding handling)
+
+Key fixes:
+1. Excludes padding token (index=0) from candidate set
+2. Properly handles target indices alignment
+3. Unified for both baseline and UPSTAR
 
 Supports:
 - Precision@k
@@ -8,7 +13,7 @@ Supports:
 - MRR@k
 
 k in {1, 5, 10, 15, 20, 50}
-Output format: Percentage (0-100)
+Output format: 0-1 scale (can be converted to percentage)
 """
 
 import torch
@@ -19,10 +24,53 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _remove_padding(
+    logits: torch.Tensor,
+    padding_idx: int = 0
+) -> torch.Tensor:
+    """
+    Remove padding token from logits.
+
+    Args:
+        logits: [batch_size, num_items + 1] raw logits (including padding)
+        padding_idx: index of padding token (default 0)
+
+    Returns:
+        candidates: [batch_size, num_items] candidate logits (excludes padding)
+    """
+    # Remove padding at index 0
+    # logits[:, 0] is padding
+    # logits[:, 1:] are valid items
+    return logits[:, 1:]
+
+
+def _align_targets(
+    targets: torch.Tensor,
+    padding_idx: int = 0
+) -> torch.Tensor:
+    """
+    Align target indices with candidate set (after padding removal).
+
+    Args:
+        targets: [batch_size] target indices (original, including padding)
+        padding_idx: index of padding token (default 0)
+
+    Returns:
+        adjusted_targets: [batch_size] target indices (aligned with candidates)
+                          targets are in range [1, num_items], so subtract 1 to match
+    """
+    # logits[:, 1:] are valid items (indices 1..num_items in logits)
+    # candidates are reindexed to 0..num_items-1
+    # targets are in range [1, num_items], so subtract 1 to match
+    return targets - 1
+
+
 def precision_at_k(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    k: int = 10
+    k: int = 10,
+    exclude_padding: bool = True,
+    padding_idx: int = 0
 ) -> float:
     """
     Compute Precision@K
@@ -30,20 +78,30 @@ def precision_at_k(
     Whether the true item is in top-k predictions.
 
     Args:
-        predictions: [batch_size, num_items] prediction scores
+        predictions: [batch_size, num_items] or [batch_size, num_items + 1] prediction scores
         targets: [batch_size] target item indices
         k: cutoff
+        exclude_padding: whether to exclude padding token from top-k
+        padding_idx: index of padding token (default 0)
 
     Returns:
         precision: average precision@k (0-1)
     """
     batch_size = predictions.shape[0]
 
+    # Exclude padding if requested
+    if exclude_padding:
+        candidates = _remove_padding(predictions, padding_idx)
+        adjusted_targets = _align_targets(targets, padding_idx)
+    else:
+        candidates = predictions
+        adjusted_targets = targets
+
     # Get top-k predictions
-    _, top_k_indices = torch.topk(predictions, k, dim=1)
+    _, top_k_indices = torch.topk(candidates, min(k, candidates.shape[1]), dim=1)
 
     # Check if targets are in top-k
-    targets_expanded = targets.unsqueeze(1).expand(-1, k)
+    targets_expanded = adjusted_targets.unsqueeze(1).expand(-1, top_k_indices.shape[1])
     hits = (top_k_indices == targets_expanded).any(dim=1).float()
 
     precision = hits.mean().item()
@@ -54,7 +112,9 @@ def precision_at_k(
 def recall_at_k(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    k: int = 10
+    k: int = 10,
+    exclude_padding: bool = True,
+    padding_idx: int = 0
 ) -> float:
     """
     Compute Recall@K
@@ -62,20 +122,24 @@ def recall_at_k(
     For next-item recommendation, Recall@K = Precision@K.
 
     Args:
-        predictions: [batch_size, num_items] prediction scores
+        predictions: [batch_size, num_items] or [batch_size, num_items + 1] prediction scores
         targets: [batch_size] target item indices
         k: cutoff
+        exclude_padding: whether to exclude padding token from top-k
+        padding_idx: index of padding token (default 0)
 
     Returns:
         recall: average recall@k (0-1)
     """
-    return precision_at_k(predictions, targets, k)
+    return precision_at_k(predictions, targets, k, exclude_padding, padding_idx)
 
 
 def ndcg_at_k(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    k: int = 10
+    k: int = 10,
+    exclude_padding: bool = True,
+    padding_idx: int = 0
 ) -> float:
     """
     Compute NDCG@K (Normalized Discounted Cumulative Gain)
@@ -84,25 +148,37 @@ def ndcg_at_k(
     Else: 0
 
     Args:
-        predictions: [batch_size, num_items] prediction scores
+        predictions: [batch_size, num_items] or [batch_size, num_items + 1] prediction scores
         targets: [batch_size] target item indices
         k: cutoff
+        exclude_padding: whether to exclude padding token from top-k
+        padding_idx: index of padding token (default 0)
 
     Returns:
         ndcg: average NDCG@k (0-1)
     """
     batch_size = predictions.shape[0]
 
+    # Exclude padding if requested
+    if exclude_padding:
+        candidates = _remove_padding(predictions, padding_idx)
+        adjusted_targets = _align_targets(targets, padding_idx)
+    else:
+        candidates = predictions
+        adjusted_targets = targets
+
+    k = min(k, candidates.shape[1])
+
     # Get top-k predictions
-    _, top_k_indices = torch.topk(predictions, k, dim=1)
+    _, top_k_indices = torch.topk(candidates, k, dim=1)
 
     # Find position of target in top-k (1-indexed)
-    targets_expanded = targets.unsqueeze(1).expand(-1, k)
+    targets_expanded = adjusted_targets.unsqueeze(1).expand(-1, k)
     hit_mask = (top_k_indices == targets_expanded)
 
     # Get ranks (1-indexed) where hit
     ranks = torch.arange(1, k + 1, device=predictions.device, dtype=torch.float)
-    hit_ranks = (ranks * hit_mask).max(dim=1)[0]  # [batch_size]
+    hit_ranks = (ranks * hit_mask.float()).max(dim=1)[0]  # [batch_size]
 
     # Compute DCG
     # DCG = 1 / log2(1 + rank) if hit, else 0
@@ -123,7 +199,9 @@ def ndcg_at_k(
 def mrr_at_k(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    k: int = 10
+    k: int = 10,
+    exclude_padding: bool = True,
+    padding_idx: int = 0
 ) -> float:
     """
     Compute MRR@K (Mean Reciprocal Rank)
@@ -132,25 +210,37 @@ def mrr_at_k(
     Else: 0
 
     Args:
-        predictions: [batch_size, num_items] prediction scores
+        predictions: [batch_size, num_items] or [batch_size, num_items + 1] prediction scores
         targets: [batch_size] target item indices
         k: cutoff
+        exclude_padding: whether to exclude padding token from top-k
+        padding_idx: index of padding token (default 0)
 
     Returns:
         mrr: average MRR@k (0-1)
     """
     batch_size = predictions.shape[0]
 
+    # Exclude padding if requested
+    if exclude_padding:
+        candidates = _remove_padding(predictions, padding_idx)
+        adjusted_targets = _align_targets(targets, padding_idx)
+    else:
+        candidates = predictions
+        adjusted_targets = targets
+
+    k = min(k, candidates.shape[1])
+
     # Get top-k predictions
-    _, top_k_indices = torch.topk(predictions, k, dim=1)
+    _, top_k_indices = torch.topk(candidates, k, dim=1)
 
     # Find position of target in top-k (1-indexed)
-    targets_expanded = targets.unsqueeze(1).expand(-1, k)
+    targets_expanded = adjusted_targets.unsqueeze(1).expand(-1, k)
     hit_mask = (top_k_indices == targets_expanded)
 
     # Get ranks (1-indexed) where hit
     ranks = torch.arange(1, k + 1, device=predictions.device, dtype=torch.float)
-    hit_ranks = (ranks * hit_mask).max(dim=1)[0]  # [batch_size]
+    hit_ranks = (ranks * hit_mask.float()).max(dim=1)[0]  # [batch_size]
 
     # Compute reciprocal rank
     rr = torch.where(
@@ -167,15 +257,19 @@ def mrr_at_k(
 def compute_all_metrics(
     predictions: torch.Tensor,
     targets: torch.Tensor,
-    k_values: List[int] = [1, 5, 10, 15, 20, 50]
+    k_values: List[int] = [1, 5, 10, 15, 20, 50],
+    exclude_padding: bool = True,
+    padding_idx: int = 0
 ) -> Dict[str, float]:
     """
     Compute all metrics for given predictions
 
     Args:
-        predictions: [batch_size, num_items] prediction scores
+        predictions: [batch_size, num_items] or [batch_size, num_items + 1] prediction scores
         targets: [batch_size] target item indices
         k_values: list of k values
+        exclude_padding: whether to exclude padding token from top-k (default: True)
+        padding_idx: index of padding token (default 0)
 
     Returns:
         metrics: dict of metric names and values (0-1 scale)
@@ -183,10 +277,18 @@ def compute_all_metrics(
     metrics = {}
 
     for k in k_values:
-        metrics[f'Precision@{k}'] = precision_at_k(predictions, targets, k)
-        metrics[f'Recall@{k}'] = recall_at_k(predictions, targets, k)
-        metrics[f'NDCG@{k}'] = ndcg_at_k(predictions, targets, k)
-        metrics[f'MRR@{k}'] = mrr_at_k(predictions, targets, k)
+        metrics[f'Precision@{k}'] = precision_at_k(
+            predictions, targets, k, exclude_padding, padding_idx
+        )
+        metrics[f'Recall@{k}'] = recall_at_k(
+            predictions, targets, k, exclude_padding, padding_idx
+        )
+        metrics[f'NDCG@{k}'] = ndcg_at_k(
+            predictions, targets, k, exclude_padding, padding_idx
+        )
+        metrics[f'MRR@{k}'] = mrr_at_k(
+            predictions, targets, k, exclude_padding, padding_idx
+        )
 
     return metrics
 
@@ -331,36 +433,46 @@ def print_mean_std(
 
 
 if __name__ == '__main__':
-    print("Testing enhanced metrics...")
+    print("Testing unified metrics with padding handling...")
 
-    # Create dummy predictions
+    # Create dummy data
     batch_size = 100
     num_items = 1000
 
-    # Random predictions
-    predictions = torch.randn(batch_size, num_items)
-    targets = torch.randint(0, num_items, (batch_size,))
+    # Simulate model output: [batch, num_items + 1] (includes padding at index 0)
+    predictions = torch.randn(batch_size, num_items + 1)
+    # Targets are in range [1, num_items] (never 0, which is padding)
+    targets = torch.randint(1, num_items + 1, (batch_size,))
 
-    # Compute metrics for all k values
-    k_values = [1, 5, 10, 15, 20, 50]
-    metrics = compute_all_metrics(predictions, targets, k_values=k_values)
+    # Test with padding exclusion (RECOMMENDED)
+    print("\n=== Test 1: With padding exclusion (recommended) ===")
+    metrics_with_exclusion = compute_all_metrics(
+        predictions, targets, k_values=[5, 10, 20],
+        exclude_padding=True, padding_idx=0
+    )
 
-    # Print main results
-    print_main_results(metrics, "Main Results (Test)")
+    print_main_results(metrics_with_exclusion, "Main Results (Padding Excluded)")
 
-    # Print all metrics
-    print_metrics(metrics, "All Metrics (Test)", percentage=True)
+    # Test without padding exclusion (OLD BEHAVIOR)
+    print("\n=== Test 2: Without padding exclusion (old behavior) ===")
+    metrics_without_exclusion = compute_all_metrics(
+        predictions, targets, k_values=[5, 10, 20],
+        exclude_padding=False, padding_idx=0
+    )
 
-    # Test percentage formatting
-    formatted = format_metrics_percentage(metrics)
-    print("\nFormatted metrics:")
-    for k in k_values:
-        print(f"@{k}: {formatted[f'Precision@{k}']}")
+    print_main_results(metrics_without_exclusion, "Main Results (Padding Included)")
 
-    # Test mean/std computation
-    print("\nTesting mean/std computation...")
-    metrics_list = [metrics] * 5  # Simulate 5 runs
-    stats = compute_mean_std(metrics_list)
-    print_mean_std(stats, "Cross-Validation Results (Simulated)")
+    # Compare
+    print("\n=== Comparison ===")
+    for metric in ['Precision@5', 'NDCG@20']:
+        with_val = metrics_with_exclusion[metric] * 100
+        without_val = metrics_without_exclusion[metric] * 100
+        diff = with_val - without_val
+        print(f"{metric}:")
+        print(f"  With exclusion:    {with_val:.2f}%")
+        print(f"  Without exclusion: {without_val:.2f}%")
+        print(f"  Difference:         {diff:+.2f}%")
 
-    print("\nAll enhanced metric tests passed!")
+    print("\n✅ All unified metric tests passed!")
+    print("\nRecommended usage:")
+    print("  metrics = compute_all_metrics(predictions, targets, k_values, exclude_padding=True)")

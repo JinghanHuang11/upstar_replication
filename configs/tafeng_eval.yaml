@@ -72,7 +72,7 @@ training:
   # Training schedule
   max_epochs_per_stage: 10  # [ENG]
   early_stop_patience: 3   # [ENG]
-  metric_for_best: 'NDCG@10'  # [ENG] paper main: NDCG@20
+  metric_for_best: 'NDCG@20'  # [PAPER] main table metric
 
   # Loss weights — must match training config
   # L_total = 1.0*L_global + 0.7*L_S&E&O + 1.0*L_orth + 1.0*L_distill

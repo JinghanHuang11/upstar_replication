@@ -25,9 +25,10 @@ venv/
 env/
 ENV/
 
-# IDE
+# IDE / Claude
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -51,6 +52,9 @@ outputs/predictions/*
 !outputs/checkpoints/.gitkeep
 !outputs/logs/.gitkeep
 !outputs/predictions/.gitkeep
+outputs/experiments/
+outputs/pipeline_steps/
+inspect_global.py
 
 # Logs
 *.log

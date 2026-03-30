@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compare Baseline and UPSTAR Results
+# Compare Baseline and UPSTAR Results (CV10-ONLY)
 #
 # Usage:
 #   bash scripts/compare_results.sh
@@ -7,33 +7,31 @@
 set -e
 
 echo "============================================================"
-echo "Comparing Baseline vs UPSTAR Results"
+echo "Comparing Baseline vs UPSTAR Results (10-Fold CV)"
 echo "============================================================"
 
 echo ""
 echo "Looking for results..."
 
-# Find result directories
-BASELINE_DIR=$(find outputs/phase1_baseline -name "main_results.json" -exec dirname {} \; 2>/dev/null | head -1)
-UPSTAR_DIR=$(find outputs/phase4_upstar -name "main_results.json" -exec dirname {} \; 2>/dev/null | head -1)
+# Find result directories (CV10-only mode)
+BASELINE_DIR="outputs/phase1_baseline/results"
+UPSTAR_DIR="outputs/phase4_upstar/results"
 
-if [ -z "$BASELINE_DIR" ]; then
+if [ ! -f "$BASELINE_DIR/cv_results.json" ]; then
     echo "ERROR: Baseline results not found"
-    echo "Expected: outputs/phase1_baseline/single_run/results/main_results.json"
-    echo "          or: outputs/phase1_baseline/cross_validation/results/main_results.json"
+    echo "Expected: $BASELINE_DIR/cv_results.json"
     echo ""
     echo "Please run baseline first:"
-    echo "  bash scripts/run_tafeng_baseline.sh single"
+    echo "  bash scripts/run_tafeng_baseline.sh"
     exit 1
 fi
 
-if [ -z "$UPSTAR_DIR" ]; then
+if [ ! -f "$UPSTAR_DIR/cv_results.json" ]; then
     echo "ERROR: UPSTAR results not found"
-    echo "Expected: outputs/phase4_upstar/single_run/results/main_results.json"
-    echo "          or: outputs/phase4_upstar/cross_validation/results/main_results.json"
+    echo "Expected: $UPSTAR_DIR/cv_results.json"
     echo ""
     echo "Please run UPSTAR first:"
-    echo "  bash scripts/run_tafeng_upstar.sh single"
+    echo "  bash scripts/run_tafeng_upstar.sh"
     exit 1
 fi
 
@@ -52,6 +50,7 @@ echo "------------------------------------------------------------"
 
 python - <<PYTHON_SCRIPT
 import sys
+import json
 sys.path.append('.')
 
 from src.evaluation.comparison import ModelComparator

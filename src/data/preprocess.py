@@ -335,7 +335,7 @@ if __name__ == '__main__':
     import sys
 
     # Load config
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'configs/baseline.yaml'
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'configs/tafeng_baseline.yaml'
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 

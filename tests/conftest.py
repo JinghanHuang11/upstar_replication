@@ -55,7 +55,9 @@ def _make_full_config(output_dir: Path, dataset_name: str = "tafeng") -> dict:
             'cache_dir': str(output_dir / "data" / "cache"),
             'min_user_interactions': 2,
             'min_item_frequency': 2,
-            'split_method': 'leave_one_out',
+            'split_method': 'cv10',  # CV10-ONLY mode
+            'num_folds': 10,
+            'cv_random_seed': 42,
             'time_window': 86400,
         },
         'model': {

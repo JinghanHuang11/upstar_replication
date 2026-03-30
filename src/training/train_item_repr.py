@@ -247,13 +247,37 @@ def save_checkpoint(
 
 def save_item_embeddings(
     model: nn.Module,
-    save_path: Path
+    graph: dict,
+    save_path: Path,
+    use_graph_enhanced: bool = True
 ):
-    """Save item embeddings"""
-    embeddings = model.get_item_embeddings()
+    """
+    Save item embeddings (GRAPH-ENHANCED by default)
+
+    Args:
+        model: ItemGNN model
+        graph: graph dict with edge_index and edge_weight
+        save_path: path to save embeddings
+        use_graph_enhanced: if True, save graph-enhanced embeddings (RECOMMENDED)
+                           if False, save original embedding table (LEGACY)
+    """
+    if use_graph_enhanced:
+        # Get FINAL embeddings AFTER GNN message passing (RECOMMENDED)
+        embeddings = model.get_final_item_embeddings(
+            graph['edge_index'],
+            graph.get('edge_weight', None)
+        )
+        logger.info(f"Saving GRAPH-ENHANCED item embeddings (after GNN message passing)")
+    else:
+        # Get ORIGINAL embedding table weights (LEGACY, NOT RECOMMENDED)
+        embeddings = model.get_item_embeddings()
+        logger.warning(f"Saving ORIGINAL embedding table (NOT graph-enhanced)")
+        logger.warning(f"This is NOT recommended for downstream STB / UPSTAR!")
+
     torch.save(embeddings, save_path)
     logger.info(f"Saved item embeddings to {save_path}")
     logger.info(f"  Embedding shape: {embeddings.shape}")
+    logger.info(f"  Embedding type: {'GRAPH-ENHANCED' if use_graph_enhanced else 'ORIGINAL (table only)'}")
 
 
 def analyze_embeddings(
@@ -386,11 +410,11 @@ def main(args=None):
     best_checkpoint = torch.load(checkpoint_dir / 'best_model.pt', weights_only=False)
     model.load_state_dict(best_checkpoint['model_state_dict'])
 
-    # Save embeddings
+    # Save GRAPH-ENHANCED embeddings (RECOMMENDED)
     output_dir = Path(config['logging']['checkpoint_dir'])
     output_dir.mkdir(parents=True, exist_ok=True)
     embedding_path = output_dir / 'item_embeddings.pt'
-    save_item_embeddings(model, embedding_path)
+    save_item_embeddings(model, graph, embedding_path, use_graph_enhanced=True)
 
     # Analyze embeddings
     embeddings = torch.load(embedding_path)

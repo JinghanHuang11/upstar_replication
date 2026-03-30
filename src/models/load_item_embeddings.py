@@ -15,19 +15,27 @@ def get_item_embeddings(
     checkpoint_dir: Optional[str] = None
 ) -> torch.Tensor:
     """
-    Load learned item embeddings
+    Load learned item embeddings (GRAPH-ENHANCED)
+
+    This loads the FINAL item embeddings AFTER GNN message passing,
+    which include graph structural information.
 
     Args:
         config: configuration dict (optional)
         checkpoint_dir: path to checkpoint directory (optional)
 
     Returns:
-        item_embeddings: [num_items, embed_dim]
+        item_embeddings: [num_items, embed_dim] - GRAPH-ENHANCED embeddings
 
     Example usage:
         >>> from src.models.load_item_embeddings import get_item_embeddings
         >>> embeddings = get_item_embeddings(checkpoint_dir='outputs/phase2_item_repr/checkpoints/')
         >>> print(embeddings.shape)  # [num_items, 128]
+
+    NOTE:
+        These embeddings are the output of ItemGNN.forward(edge_index),
+        NOT the raw embedding table weights.
+        They include graph structural information through GNN propagation.
     """
     if checkpoint_dir is None and config is not None:
         # Try common paths
