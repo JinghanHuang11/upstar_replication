@@ -45,6 +45,9 @@ data/cache/*
 !data/processed/.gitkeep
 !data/cache/.gitkeep
 
+# Cloud outputs (server downloads)
+outputs_cloud/
+
 # Outputs (ignore generated files)
 outputs/checkpoints/*
 outputs/logs/*

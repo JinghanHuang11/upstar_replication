@@ -161,10 +161,10 @@ def check_phase_completion(phase_num: int) -> bool:
     """Check if a phase has been completed"""
     phase_outputs = {
         0: ['data/processed/tafeng/metadata.pkl'],
-        1: ['outputs/phase1_baseline/results/cv_results.json'],
+        1: ['outputs/phase1_baseline/results/main_results.json'],
         2: ['outputs/phase2_item_repr/checkpoints/item_embeddings.pt'],
         3: ['outputs/phase3_stb/checkpoints/motivation_labels.npy'],
-        4: ['outputs/phase4_upstar/results/cv_results.json'],
+        4: ['outputs/phase4_upstar/results/main_results.json'],
         5: ['outputs/comparison/comparison.txt']
     }
 

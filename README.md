@@ -140,12 +140,14 @@ upstar/
 │   ├── data/             # 数据处理
 │   └── graphs/           # 图构建
 │
-├── outputs/              # 输出
+├── outputs/              # 输出（本地生成）
 │   ├── phase1_baseline/              # Baseline 结果
 │   ├── phase2_item_repr/             # Item 表示
 │   ├── phase3_stb/                   # STB 结果
 │   ├── phase4_upstar/                # UPSTAR 结果
 │   └── comparison/                   # 比较结果
+│
+├── outputs_cloud/        # 服务器下载的实验输出（云端同步）
 │
 ├── RUN_EXPERIMENTS.md    # ⭐ 运行指南
 ├── docs/                 # 详细文档

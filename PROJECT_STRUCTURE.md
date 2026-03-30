@@ -80,10 +80,10 @@ upstar/
 │   ├── experiments/      # 实验管理（仅测试使用）
 │   └── utils/            # 工具
 │
-├── outputs/              # 输出目录
+├── outputs/              # 输出目录（本地生成）
 │   ├── phase1_baseline/              # Baseline 结果
 │   │   └── results/
-│   │       └── cv_results.json       # ⭐ CV10 结果
+│   │       └── main_results.json     # ⭐ CV10 结果
 │   ├── phase2_item_repr/             # Item 表示
 │   │   └── checkpoints/
 │   │       └── item_embeddings.pt    # ⭐ Embeddings
@@ -93,8 +93,13 @@ upstar/
 │   │       └── motivation_labels.npy # ⭐ 标签
 │   ├── phase4_upstar/                # UPSTAR 结果
 │   │   └── results/
-│   │       └── cv_results.json       # ⭐ CV10 结果
-│   └─��� comparison/                   # 比较结果
+│   │       └── main_results.json     # ⭐ CV10 结果
+│   └── comparison/                   # 比较结果
+│
+├── outputs_cloud/        # 服务器下载的实验输出（云端同步）
+│   └── outputs/
+│       ├── phase4_upstar/            # 服务器 UPSTAR 结果
+│       └── pipeline_steps/           # pipeline 各阶段状态和结果
 │
 ├── tests/                # 测试脚本
 ├── RUN_EXPERIMENTS.md    # ⭐ 运行指南
