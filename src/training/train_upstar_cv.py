@@ -473,18 +473,7 @@ def run_cross_validation(
     # Set seed
     set_seed(config.get('seed', 42))
 
-    # Quick test overrides
-    if quick_test:
-        config['training']['max_epochs_per_stage'] = 2
-        config['training']['early_stop_patience'] = 2
-        logger.info("Quick test mode: using 2 epochs per stage")
-
-    # Use provided num_folds or config default
-    if num_folds is None:
-        num_folds = config['dataset'].get('num_folds', 10)
-    logger.info(f"Running {num_folds}-fold cross-validation")
-
-    # Setup logging
+    # Setup logging (before any logger usage)
     if output_dir is None:
         output_dir = Path(config['logging']['checkpoint_dir']).parent.parent / 'cross_validation'
     else:
@@ -499,6 +488,17 @@ def run_cross_validation(
 
     global logger
     logger = get_logger(__name__, str(log_file))
+
+    # Quick test overrides
+    if quick_test:
+        config['training']['max_epochs_per_stage'] = 2
+        config['training']['early_stop_patience'] = 2
+        logger.info("Quick test mode: using 2 epochs per stage")
+
+    # Use provided num_folds or config default
+    if num_folds is None:
+        num_folds = config['dataset'].get('num_folds', 10)
+    logger.info(f"Running {num_folds}-fold cross-validation")
 
     logger.info("=" * 80)
     logger.info("UPSTAR 10-Fold Cross-Validation Training")
