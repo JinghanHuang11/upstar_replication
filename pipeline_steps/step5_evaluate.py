@@ -36,7 +36,7 @@ class Step5Evaluate(BaseStep):
         self.logger.info("Checking prerequisites...")
 
         # Check baseline results
-        baseline_results = self.baseline_dir / 'cv_results.json'
+        baseline_results = self.baseline_dir / 'main_results.json'
         if not baseline_results.exists():
             self.logger.error(f"  ✗ Baseline results not found: {baseline_results}")
             self.logger.error("    Run: python -m pipeline_steps.step1_baseline")
@@ -44,7 +44,7 @@ class Step5Evaluate(BaseStep):
         self.logger.info(f"  ✓ Baseline results: {baseline_results}")
 
         # Check UPSTAR results
-        upstar_results = self.upstar_dir / 'cv_results.json'
+        upstar_results = self.upstar_dir / 'main_results.json'
         if not upstar_results.exists():
             self.logger.error(f"  ✗ UPSTAR results not found: {upstar_results}")
             self.logger.error("    Run: python -m pipeline_steps.step4_upstar")

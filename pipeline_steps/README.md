@@ -116,7 +116,7 @@ outputs/phase1_baseline/
 ├── checkpoints/          # 每个 fold 的模型检查点
 ├── logs/                 # 训练日志
 └── results/
-    └── cv_results.json   # CV10 统计结果
+    └── main_results.json   # CV10 统计结果
 ```
 
 **运行**:
@@ -193,7 +193,7 @@ outputs/phase4_upstar/
 ├── logs/                 # 训练日志
 ├── predictions/          # 预测结果
 └── results/
-    └── cv_results.json   # CV10 统计结果
+    └── main_results.json   # CV10 统计结果
 ```
 
 **运行**:
@@ -269,7 +269,7 @@ python run_pipeline.py --upstar-config configs/my_upstar.yaml
 
 ## 📊 输出文件格式
 
-### cv_results.json 格式
+### main_results.json 格式
 
 ```json
 {

@@ -7,7 +7,7 @@ Trains UPSTAR model with 10-fold cross-validation and dual teacher-student.
 Output:
     - outputs/phase4_upstar/checkpoints/
     - outputs/phase4_upstar/logs/
-    - outputs/phase4_upstar/results/cv_results.json
+    - outputs/phase4_upstar/results/main_results.json
 
 Usage:
     python -m pipeline_steps.step4_upstar
@@ -101,7 +101,7 @@ class Step4Upstar(BaseStep):
         if not self.output_dir:
             return False
 
-        results_file = self.output_dir / 'results' / 'cv_results.json'
+        results_file = self.output_dir / 'results' / 'main_results.json'
         if results_file.exists():
             self.logger.info(f"  ✓ Output exists: {results_file}")
             return True
@@ -141,24 +141,18 @@ class Step4Upstar(BaseStep):
                 quick_test=self.quick_test
             )
 
-            # Generate reports
-            cv_stats_pct = {}
-            for metric_name, stats in cv_results.items():
-                cv_stats_pct[metric_name] = {
-                    'mean': stats['mean'] * 100,
-                    'std': stats['std'] * 100
-                }
-
-            generator = ReportGenerator({}, cv_stats_pct)
+            # Generate reports (pass raw decimal values, ReportGenerator converts to %)
+            generator = ReportGenerator({}, cv_results)
             generator.save_all_formats(str(self.output_dir / 'results'))
 
             # Save with model type label
-            results_file = self.output_dir / 'results' / 'cv_results.json'
-            with open(results_file, 'r') as f:
-                data = json.load(f)
-            data['model_type'] = 'upstar'
-            data['dataset'] = 'tafeng'
-            data['num_folds'] = self.num_folds
+            results_file = self.output_dir / 'results' / 'main_results.json'
+            data = {
+                'model_type': 'upstar',
+                'dataset': 'tafeng',
+                'num_folds': self.num_folds,
+                'metrics': cv_results
+            }
             with open(results_file, 'w') as f:
                 json.dump(data, f, indent=2)
 
