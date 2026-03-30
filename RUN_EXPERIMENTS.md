@@ -101,7 +101,7 @@ python -m src.training.train_baseline --config configs/tafeng_baseline.yaml
 ### UPSTAR 训练
 
 ```bash
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 ```
 
 ### Item 表示学习

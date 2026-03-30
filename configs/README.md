@@ -52,7 +52,7 @@ bash scripts/run_tafeng_baseline.sh
 
 **Usage**:
 ```bash
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 # or
 bash scripts/run_tafeng_upstar.sh
 ```
@@ -212,7 +212,7 @@ python -m src.training.train_item_repr --config configs/item_repr.yaml
 python -m src.training.train_stb --config configs/stb.yaml
 
 # UPSTAR (Phase 4)
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 
 # Evaluation (Phase 5)
 python -m src.evaluation.evaluate --config configs/tafeng_eval.yaml

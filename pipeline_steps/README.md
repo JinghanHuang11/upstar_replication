@@ -51,7 +51,7 @@ python -m pipeline_steps.step3_stb
 # Step 4: UPSTAR 训练
 python -m pipeline_steps.step4_upstar
 
-# Step 5: 评估和比较
+# Step 5: 评估和比较（尚未开发）
 python -m pipeline_steps.step5_evaluate
 ```
 

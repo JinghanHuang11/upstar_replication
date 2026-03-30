@@ -538,7 +538,7 @@ def main(args=None):
     logger.info("")
     logger.info("Next steps:")
     logger.info("  Phase 4: Train UPSTAR model using these motivation labels")
-    logger.info("    python -m src.training.train_upstar --config configs/tafeng_upstar.yaml")
+    logger.info("    python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml")
     logger.info("")
 
     return {}

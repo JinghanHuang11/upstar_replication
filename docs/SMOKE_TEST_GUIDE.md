@@ -92,7 +92,7 @@ python src/training/train_stb.py --config configs/stb.yaml
 
 #### Phase 4: UPSTAR 快速测试（20分钟）
 ```bash
-python -m src.training.train_upstar \
+python -m src.training.train_upstar_cv \
     --config configs/tafeng_upstar.yaml \
     --num-folds 1 \
     --quick-test
@@ -170,7 +170,7 @@ python -m src.training.train_baseline \
 ### UPSTAR 训练
 
 ```bash
-python -m src.training.train_upstar \
+python -m src.training.train_upstar_cv \
     --config configs/tafeng_upstar.yaml \
     --num-folds 1 \              # 只训练 1 fold（默认 10）
     --quick-test                 # 快速测试模式（2 epochs/stage，默认 10）

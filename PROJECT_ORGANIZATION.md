@@ -75,7 +75,6 @@ src/training/
 ├── cross_validation_baseline.py  # ⭐ Baseline 唯一实现
 ├── train_baseline.py              # Baseline 薄封装
 ├── train_upstar_cv.py             # ⭐ UPSTAR 唯一实现
-├── train_upstar.py                # UPSTAR 薄封装
 ├── train_item_repr.py             # Item 表示学习
 ├── train_stb.py                   # STB 计算
 └── losses.py                      # 损失函数
@@ -139,7 +138,7 @@ bash scripts/compare_results.sh         # Phase 5
 python -m src.training.train_baseline --config configs/tafeng_baseline.yaml
 
 # UPSTAR 训练
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 
 # Item 表示
 python src/training/train_item_repr.py --config configs/item_repr.yaml

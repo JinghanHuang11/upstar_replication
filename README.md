@@ -54,11 +54,11 @@ bash scripts/compare_results.sh         # Phase 5
 python -m src.training.train_baseline --config configs/tafeng_baseline.yaml
 
 # UPSTAR 训练
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 
 # 快速测试（1 fold, 3 epochs）
 python -m src.training.train_baseline --num-folds 1 --quick-test
-python -m src.training.train_upstar --num-folds 1 --quick-test
+python -m src.training.train_upstar_cv --num-folds 1 --quick-test
 ```
 
 ---

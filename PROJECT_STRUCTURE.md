@@ -67,8 +67,7 @@ upstar/
 │   ├── training/         # 训练
 │   │   ├── cross_validation_baseline.py # ⭐ Baseline CV10 实现
 │   │   ├── train_baseline.py           # Baseline 薄封装
-│   │   ├── train_upstar_cv.py          # ⭐ UPSTAR CV10 实现
-│   │   ├── train_upstar.py             # UPSTAR 薄封装
+│   │   ├── train_upstar_cv.py          # ⭐ UPSTAR CV10 实现（唯一）
 │   │   ├── train_item_repr.py          # Item 表示训练
 │   │   ├── train_stb.py                # STB 计算
 │   │   └── losses.py                   # 损失函数
@@ -117,7 +116,6 @@ upstar/
 | `cross_validation_baseline.py` | Baseline 10-fold CV 实现 | ⭐ 唯一实现 |
 | `train_baseline.py` | Baseline 薄封装 | 调用上方 |
 | `train_upstar_cv.py` | UPSTAR 10-fold CV 实现 | ⭐ 唯一实现 |
-| `train_upstar.py` | UPSTAR 薄封装 | 调用上方 |
 | `train_item_repr.py` | Item 表示学习 | 独立实现 |
 | `train_stb.py` | STB 计算 | 独立实现 |
 

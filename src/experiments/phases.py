@@ -250,22 +250,16 @@ class Phase4_UPSTAR(ExperimentPhase):
         """Run UPSTAR training"""
         logger.info("Running UPSTAR training (4 stages)...")
 
-        from src.training.train_upstar import main as train_main
-
-        import argparse
-        args = argparse.Namespace(
-            config=self.config.get('upstar_config', 'configs/tafeng_upstar.yaml'),
-            stage=None,
-            resume_stage=None
-        )
+        from src.training.train_upstar_cv import run_cross_validation
 
         # Run training
-        metrics = train_main(args)
+        config_path = self.config.get('upstar_config', 'configs/tafeng_upstar.yaml')
+        cv_results = run_cross_validation(config_path=config_path)
 
         results = {
-            'ndcg@10': float(metrics.get('ndcg_10', 0.0)),
-            'hr@10': float(metrics.get('hr_10', 0.0)),
-            'mrr@10': float(metrics.get('mrr_10', 0.0)),
+            'ndcg@10': float(cv_results.get('NDCG@10', {}).get('mean', 0.0)),
+            'ndcg@20': float(cv_results.get('NDCG@20', {}).get('mean', 0.0)),
+            'hr@10': float(cv_results.get('Precision@10', {}).get('mean', 0.0)),
             'model_path': str(self.checkpoint_dir / "model_after_stage4.pt")
         }
 

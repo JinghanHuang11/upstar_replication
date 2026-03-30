@@ -59,15 +59,15 @@ This document summarizes the major refactoring work done to align the UPSTAR pro
 
 **Changes**:
 - Created `train_upstar_cv.py` with complete cv10 implementation
-- Rewrote `train_upstar.py` as thin wrapper
+- Deleted `train_upstar.py` wrapper (redundant)
 - Added internal validation split for early stopping
 - Implemented 4-stage curriculum training with explicit stage switching
 - Added `set_stage()` method to `UPSTARLoss`
 - Explicit best model reload after each stage
 
 **Files Modified**:
-- `src/training/train_upstar.py` (wrapper)
-- `src/training/train_upstar_cv.py` (new, complete implementation)
+- `src/training/train_upstar.py` (DELETED - redundant wrapper)
+- `src/training/train_upstar_cv.py` (ONLY impl)
 - `src/models/upstar_loss.py` (added `set_stage()` method)
 
 **Key Functions**:
@@ -302,8 +302,7 @@ metrics = compute_all_metrics(logits, targets, k_values=[5, 10, 20], exclude_pad
 - `src/data/build_sequences.py` - Data splitting
 - `src/training/train_baseline.py` - Baseline training wrapper
 - `src/training/cross_validation_baseline.py` - Baseline cv10 implementation
-- `src/training/train_upstar.py` - UPSTAR training wrapper
-- `src/training/train_upstar_cv.py` - UPSTAR cv10 implementation
+- `src/training/train_upstar_cv.py` - UPSTAR cv10 implementation (ONLY)
 - `src/training/train_stb.py` - STB computation (paper-aligned default)
 - `src/evaluation/metrics.py` - Unified evaluation metrics
 - `src/models/item_gnn.py` - Graph-enhanced embeddings

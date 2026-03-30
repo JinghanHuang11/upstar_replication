@@ -3,7 +3,7 @@ test_phase4_upstar.py — Phase 4 真实执行测试
 
 测试目标：UPSTAR 四阶段训练
 - 依赖检查（item_embeddings.pt + motivation_labels.npy 同时存在）
-- execute() 真实调用 train_upstar.main()
+- execute() 真实调用 train_upstar_cv.run_cross_validation()
 - 验证 model_after_stage4.pt 输出
 """
 
@@ -40,7 +40,7 @@ class TestPhase4Dependencies:
 
 class TestPhase4Execution:
     def test_execute_runs_upstar(self, phase4, phase0, phase2, phase3):
-        """execute() 真实调用 train_upstar.main()"""
+        """execute() 真实调用 train_upstar_cv.run_cross_validation()"""
         phase0.execute()
         phase2.execute()
         phase3.execute()

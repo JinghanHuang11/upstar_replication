@@ -36,7 +36,7 @@ python -m src.training.train_baseline --config configs/tafeng_baseline.yaml
 #### UPSTAR
 ```bash
 # 10-fold CV with 4-stage curriculum
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 ```
 
 ### **Phase 5: Evaluation**
@@ -53,7 +53,7 @@ python -m src.evaluation.evaluate --config configs/tafeng_eval.yaml --mode cv
 ## ❌ Deprecated Files (已废弃文件清单)
 
 ### **Training**
-- `src/training/train_upstar_stage1.py` → Use `train_upstar.py` instead
+- `src/training/train_upstar_stage1.py` → Use `train_upstar_cv.py` instead
 - `src/training/train_stb_advanced.py` → Use `train_stb.py --mode <paper|baseline>` instead
 
 ### **Evaluation**
@@ -72,10 +72,9 @@ python -m src.evaluation.evaluate --config configs/tafeng_eval.yaml --mode cv
 src/training/
 ├── train_item_repr.py           # Phase 2: Item GNN
 ├── train_stb.py                 # Phase 3: STB (MAIN)
-├─��� train_baseline.py            # Phase 4: Baseline wrapper
+├── train_baseline.py            # Phase 4: Baseline wrapper
 ├── cross_validation_baseline.py # Phase 4: Baseline impl
-├── train_upstar.py              # Phase 4: UPSTAR wrapper
-└── train_upstar_cv.py           # Phase 4: UPSTAR impl
+└── train_upstar_cv.py           # Phase 4: UPSTAR (ONLY impl)
 
 src/evaluation/
 ├── metrics.py                   # Unified metrics (CORE)
@@ -110,7 +109,7 @@ bash scripts/run_tafeng_baseline.sh
 
 ### **Train UPSTAR**
 ```bash
-python -m src.training.train_upstar --config configs/tafeng_upstar.yaml
+python -m src.training.train_upstar_cv --config configs/tafeng_upstar.yaml
 # or
 bash scripts/run_tafeng_upstar.sh
 ```
