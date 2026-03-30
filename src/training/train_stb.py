@@ -437,22 +437,22 @@ def save_results(
 
     # Save STB scores
     stb_scores_path = checkpoint_dir / config['stb']['stb_scores_path']
-    np.save(stb_scores_path, stb_scores.numpy())
+    np.save(stb_scores_path, stb_scores.cpu().numpy())
     logger.info(f"Saved STB scores to {stb_scores_path}")
 
     # Save motivation labels
     labels_path = checkpoint_dir / config['stb']['motivation_labels_path']
-    np.save(labels_path, motivation_labels.numpy())
+    np.save(labels_path, motivation_labels.cpu().numpy())
     logger.info(f"Saved motivation labels to {labels_path}")
 
     # Save metadata
     metadata = {
         'num_items': stb_scores.shape[0],
-        'stb_mean': float(stb_scores.mean()),
-        'stb_std': float(stb_scores.std()),
-        'num_stable': int((motivation_labels == 1).sum()),
-        'num_exploratory': int((motivation_labels == 0).sum()),
-        'num_uncategorized': int((motivation_labels == 2).sum()),
+        'stb_mean': float(stb_scores.mean().cpu()),
+        'stb_std': float(stb_scores.std().cpu()),
+        'num_stable': int((motivation_labels == 1).sum().cpu()),
+        'num_exploratory': int((motivation_labels == 0).sum().cpu()),
+        'num_uncategorized': int((motivation_labels == 2).sum().cpu()),
         'stable_ratio': config['stb']['stable_ratio'],
         'exploratory_ratio': config['stb']['exploratory_ratio']
     }
