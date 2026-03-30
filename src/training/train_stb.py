@@ -436,12 +436,13 @@ def save_results(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Save STB scores
-    stb_scores_path = checkpoint_dir / config['stb']['stb_scores_path']
+    stb_scores_path = Path(config['stb']['stb_scores_path'])
+    stb_scores_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(stb_scores_path, stb_scores.cpu().numpy())
     logger.info(f"Saved STB scores to {stb_scores_path}")
 
     # Save motivation labels
-    labels_path = checkpoint_dir / config['stb']['motivation_labels_path']
+    labels_path = Path(config['stb']['motivation_labels_path'])
     np.save(labels_path, motivation_labels.cpu().numpy())
     logger.info(f"Saved motivation labels to {labels_path}")
 
